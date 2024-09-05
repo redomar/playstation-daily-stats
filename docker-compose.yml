@@ -1,0 +1,19 @@
+version: '3'
+services:
+  psn-app:
+    build: .
+    volumes:
+      - ./output:/app/output
+    environment:
+      - NPSSO=${NPSSO}
+
+  vite-frontend:
+    build: 
+      context: ./vite-frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./output:/app/output:ro
+    depends_on:
+      - psn-app

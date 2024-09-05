@@ -1,0 +1,1 @@
+0 * * * * /app/main >> /app/output/cron.log 2>&1
