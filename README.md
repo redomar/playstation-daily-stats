@@ -55,7 +55,8 @@ This project fetches and displays your PS Network game list, including play time
 Create a `.env` file in the root of the backend directory with the following content:
 
 ```
-NPSSO=your_npsso_token_here
+NPSSO="your_npsso_token_here"
+ALLOWED_ORIGINS="http://localhost:5173,http://domain:5173"
 ```
 **Note:** Keep your NPSSO token secret and do not share it with others.
 
