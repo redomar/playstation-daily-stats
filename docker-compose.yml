@@ -6,6 +6,8 @@ services:
       - ./output:/app/output
     environment:
       - NPSSO=${NPSSO}
+    ports:
+      - "8080:8080"
 
   vite-frontend:
     build: 
@@ -13,7 +15,5 @@ services:
       dockerfile: Dockerfile
     ports:
       - "5173:5173"
-    volumes:
-      - ./output:/app/output:ro
     depends_on:
       - psn-app

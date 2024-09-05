@@ -1,32 +1,25 @@
 import { useState, useEffect } from 'react'
-import fs from 'fs'
-import path from 'path'
 
 function OutputDisplay() {
   const [data, setData] = useState<any>(null)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    const outputDir = '/app/output'
-    fs.readdir(outputDir, (err, files) => {
-      if (err) {
-        console.error('Error reading directory:', err)
-        return
-      }
-
-      // Get the most recent file
-      const latestFile = files.sort().reverse()[0]
-      if (latestFile) {
-        fs.readFile(path.join(outputDir, latestFile), 'utf8', (err, content) => {
-          if (err) {
-            console.error('Error reading file:', err)
-            return
-          }
-          setData(JSON.parse(content))
-        })
-      }
-    })
+    fetch('http://localhost:8080/api/latest-output')
+      .then(response => {
+        if (!response.ok) {
+          throw new Error('Network response was not ok')
+        }
+        return response.json()
+      })
+      .then(data => setData(data))
+      .catch(error => {
+        console.error('Error fetching data:', error)
+        setError('Failed to fetch data')
+      })
   }, [])
 
+  if (error) return <div>Error: {error}</div>
   if (!data) return <div>Loading...</div>
 
   return (

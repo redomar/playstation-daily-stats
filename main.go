@@ -8,10 +8,14 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
+	"sort"
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/rs/cors"
+
 )
 
 const (
@@ -63,6 +67,44 @@ func main() {
 		fmt.Println("Error saving resource to file:", err)
 		return
 	}
+
+	http.HandleFunc("/api/latest-output", handleLatestOutput)
+	fmt.Println("Starting server on :8080")
+	c := cors.New(cors.Options{
+		AllowedOrigins: []string{"http://localhost:5173"},
+	})
+	
+	handler := c.Handler(http.DefaultServeMux)
+	http.ListenAndServe(":8080", handler)
+}
+
+func handleLatestOutput(w http.ResponseWriter, r *http.Request) {
+    files, err := os.ReadDir("/app/output")
+    if err != nil {
+        http.Error(w, "Unable to read output directory", http.StatusInternalServerError)
+        return
+    }
+
+    if len(files) == 0 {
+        http.Error(w, "No output files found", http.StatusNotFound)
+        return
+    }
+
+    sort.Slice(files, func(i, j int) bool {
+        infoI, _ := files[i].Info()
+        infoJ, _ := files[j].Info()
+        return infoI.ModTime().After(infoJ.ModTime())
+    })
+
+    latestFile := files[0]
+    content, err := os.ReadFile(filepath.Join("/app/output", latestFile.Name()))
+    if err != nil {
+        http.Error(w, "Unable to read latest file", http.StatusInternalServerError)
+        return
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    w.Write(content)
 }
 
 func getValidToken(npsso string) (string, error) {
