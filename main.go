@@ -41,7 +41,7 @@ func main() {
 		log.Fatal("NPSSO environment variable is not set")
 	}
 
-	go hourlyFetch(npsso)
+	go dailyFetch(npsso)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/latest-output", handleLatestOutput)
@@ -56,12 +56,13 @@ func main() {
 	log.Fatal(http.ListenAndServe(":8080", handler))
 }
 
-func hourlyFetch(npsso string) {
+func dailyFetch(npsso string) {
 	for {
 		if err := fetchAndSaveData(npsso); err != nil {
 			log.Println("Error fetching and saving data:", err)
 		}
-		time.Sleep(1 * time.Hour)
+		// Wait for 24 hours before the next fetch
+		time.Sleep(24 * time.Hour)
 	}
 }
 
@@ -73,7 +74,7 @@ func fetchAndSaveData(npsso string) error {
 
 	log.Println("Valid Authentication Token obtained")
 
-	testURI := "https://m.np.playstation.com/api/gamelist/v2/users/me/titles"
+	testURI := "https://m.np.playstation.com/api/gamelist/v2/users/me/titles?limit=200"
 	resp, err := makeAuthorizedRequest(testURI, token)
 	if err != nil {
 		return fmt.Errorf("error making authorized request: %w", err)
