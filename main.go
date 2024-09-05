@@ -5,17 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/rs/cors"
-
 )
 
 const (
@@ -23,6 +23,7 @@ const (
 	clientSecret = "ucPjka5tntB2KqsP"
 	redirectURI  = "com.scee.psxandroid.scecompcall://redirect"
 	tokenFile    = "token.json"
+	outputDir    = "/app/output"
 )
 
 type TokenInfo struct {
@@ -31,82 +32,90 @@ type TokenInfo struct {
 }
 
 func main() {
-	err := godotenv.Load()
-	if err != nil {
-		fmt.Println("Error loading .env file")
+	if err := godotenv.Load(); err != nil {
+		log.Println("Warning: Error loading .env file:", err)
 	}
 
 	npsso := os.Getenv("NPSSO")
 	if npsso == "" {
-		fmt.Println("NPSSO environment variable is not set")
-		return
+		log.Fatal("NPSSO environment variable is not set")
 	}
 
-	token, err := getValidToken(npsso)
-	if err != nil {
-		fmt.Println("Error getting valid token:", err)
-		return
-	}
+	go hourlyFetch(npsso)
 
-	fmt.Println("Valid Authentication Token obtained")
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/latest-output", handleLatestOutput)
 
-	// Use the token for the API request
-	var testUri = "https://m.np.playstation.com/api/gamelist/v2/users/me/titles"
-	resp, err := makeAuthorizedRequest(testUri, token)
-	if err != nil {
-		fmt.Println("Error making authorized request:", err)
-		return
-	}
-
-	// Print the response
-	fmt.Println("Response body:", string(resp))
-
-	// save the resource to a file with todays data as unix timestamp as filename
-	err = os.WriteFile(fmt.Sprintf("/app/output/output_%d.json", time.Now().Unix()), resp, 0600)
-	if err != nil {
-		fmt.Println("Error saving resource to file:", err)
-		return
-	}
-
-	http.HandleFunc("/api/latest-output", handleLatestOutput)
-	fmt.Println("Starting server on :8080")
 	c := cors.New(cors.Options{
 		AllowedOrigins: []string{"http://localhost:5173"},
 	})
-	
-	handler := c.Handler(http.DefaultServeMux)
-	http.ListenAndServe(":8080", handler)
+
+	handler := c.Handler(mux)
+
+	log.Println("Starting server on :8080")
+	log.Fatal(http.ListenAndServe(":8080", handler))
+}
+
+func hourlyFetch(npsso string) {
+	for {
+		if err := fetchAndSaveData(npsso); err != nil {
+			log.Println("Error fetching and saving data:", err)
+		}
+		time.Sleep(1 * time.Hour)
+	}
+}
+
+func fetchAndSaveData(npsso string) error {
+	token, err := getValidToken(npsso)
+	if err != nil {
+		return fmt.Errorf("error getting valid token: %w", err)
+	}
+
+	log.Println("Valid Authentication Token obtained")
+
+	testURI := "https://m.np.playstation.com/api/gamelist/v2/users/me/titles"
+	resp, err := makeAuthorizedRequest(testURI, token)
+	if err != nil {
+		return fmt.Errorf("error making authorized request: %w", err)
+	}
+
+	filename := fmt.Sprintf("output_%d.json", time.Now().Unix())
+	if err := os.WriteFile(filepath.Join(outputDir, filename), resp, 0600); err != nil {
+		return fmt.Errorf("error saving resource to file: %w", err)
+	}
+
+	log.Printf("Data fetched and saved to %s\n", filename)
+	return nil
 }
 
 func handleLatestOutput(w http.ResponseWriter, r *http.Request) {
-    files, err := os.ReadDir("/app/output")
-    if err != nil {
-        http.Error(w, "Unable to read output directory", http.StatusInternalServerError)
-        return
-    }
+	files, err := os.ReadDir(outputDir)
+	if err != nil {
+		http.Error(w, "Unable to read output directory", http.StatusInternalServerError)
+		return
+	}
 
-    if len(files) == 0 {
-        http.Error(w, "No output files found", http.StatusNotFound)
-        return
-    }
+	if len(files) == 0 {
+		http.Error(w, "No output files found", http.StatusNotFound)
+		return
+	}
 
-    sort.Slice(files, func(i, j int) bool {
-        infoI, _ := files[i].Info()
-        infoJ, _ := files[j].Info()
-        return infoI.ModTime().After(infoJ.ModTime())
-    })
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Name() > files[j].Name()
+	})
 
-    latestFile := files[0]
-    content, err := os.ReadFile(filepath.Join("/app/output", latestFile.Name()))
-    if err != nil {
-        http.Error(w, "Unable to read latest file", http.StatusInternalServerError)
-        return
-    }
+	latestFile := files[0]
+	content, err := os.ReadFile(filepath.Join(outputDir, latestFile.Name()))
+	if err != nil {
+		http.Error(w, "Unable to read latest file", http.StatusInternalServerError)
+		return
+	}
 
-    w.Header().Set("Content-Type", "application/json")
-    w.Write(content)
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(content)
 }
 
+// ... (rest of your functions remain the same)
 func getValidToken(npsso string) (string, error) {
 	tokenInfo, err := loadTokenFromFile()
 	if err == nil && time.Now().Before(tokenInfo.ExpiresAt) {
