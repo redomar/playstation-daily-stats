@@ -20,5 +20,8 @@ RUN mkdir /app/output
 # Set the timezone to UTC
 ENV TZ=UTC
 
+# if .env file exists, copy it to the container
+COPY .env /app/.env
+
 # Run the application
 CMD ["./main"]

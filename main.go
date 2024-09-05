@@ -46,9 +46,12 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/latest-output", handleLatestOutput)
 
+	allowedOrigins := strings.Split(os.Getenv("ALLOWED_ORIGINS"), ",")
 	c := cors.New(cors.Options{
-		AllowedOrigins: []string{"http://localhost:5173"},
+		AllowedOrigins: allowedOrigins,
 	})
+	//log allowed origins
+	log.Println("Allowed Origins: ", allowedOrigins)
 
 	handler := c.Handler(mux)
 
