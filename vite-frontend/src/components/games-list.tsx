@@ -1,5 +1,11 @@
 import { useState, useEffect, useMemo } from "react";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 
 import { DiscIcon } from "@radix-ui/react-icons";
 
@@ -122,14 +128,23 @@ export function GamesList() {
   return (
     <div className="w-full max-w-6xl mx-auto py-8">
       <h1 className="text-3xl font-bold mb-6">My Games</h1>
-      <h3>Last Updated: {new Date(data.timestamp*1000).toLocaleString()}</h3>
+      <Card className="bg-background rounded-lg overflow-hidden mb-4">
+        <CardHeader>
+          <CardTitle>
+            <h3>Last Updated</h3>
+          </CardTitle>
+          <CardDescription>
+            {new Date(data.timestamp * 1000).toLocaleString()}
+          </CardDescription>
+        </CardHeader>
+      </Card>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
         {data.titles
           .filter((title) => title.category.includes("game"))
           .map((title, index) => (
             <Card
               key={index}
-              className="bg-background rounded-lg shadow-md  overflow-hidden"
+              className="bg-background rounded-lg   overflow-hidden"
             >
               <div className="flex items-center gap-4 p-4 border-b">
                 <img
