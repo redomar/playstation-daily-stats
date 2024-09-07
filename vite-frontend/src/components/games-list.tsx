@@ -1,11 +1,7 @@
 import { useState, useEffect } from "react";
-import {
-  Card,
-  CardContent,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardTitle } from "@/components/ui/card";
 
-import { DiscIcon } from '@radix-ui/react-icons'
+import { DiscIcon } from "@radix-ui/react-icons";
 
 interface LocalizedName {
   defaultLanguage: string;
@@ -77,8 +73,11 @@ export function GamesList() {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const origins = import.meta.env.VITE_ALLOWED_ORIGINS?.split(",") ?? [];
+  const uri = `${origins[0]}/api/latest-output`;
+
   useEffect(() => {
-    fetch("http://localhost:8080/api/latest-output")
+    fetch(uri)
       .then((response) => {
         if (!response.ok) {
           throw new Error("Network response was not ok");
@@ -133,7 +132,11 @@ export function GamesList() {
                   <CardTitle className="text-xl font-bold ">
                     <div className="flex flex-row items-center relative">
                       {title.service === "ps_plus" ? (
-                        <img src="/ps_plus.svg" alt="PS+" className="size-6 absolute -top-5 left-0" />
+                        <img
+                          src="/ps_plus.svg"
+                          alt="PS+"
+                          className="size-6 absolute -top-5 left-0"
+                        />
                       ) : null}
                       {title.service === "other" ? (
                         <DiscIcon className="size-4 absolute  -top-4 left-0" />
