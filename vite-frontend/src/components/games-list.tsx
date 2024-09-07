@@ -1,7 +1,11 @@
-import { useState, useEffect } from "react";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { useState, useEffect, useMemo } from "react";
+import {
+  Card,
+  CardContent,
+  CardTitle,
+} from "@/components/ui/card";
 
-import { DiscIcon } from "@radix-ui/react-icons";
+import { DiscIcon } from '@radix-ui/react-icons'
 
 interface LocalizedName {
   defaultLanguage: string;
@@ -73,8 +77,11 @@ export function GamesList() {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const origins = import.meta.env.VITE_ALLOWED_ORIGINS?.split(",") ?? [];
-  const uri = `${origins[0]}/api/latest-output`;
+  const origins = useMemo(() => 
+    import.meta.env.VITE_ALLOWED_ORIGINS?.split(",") ?? [import.meta.env.VITE_ALLOWED_ORIGINS],
+    []
+  );
+  const uri = useMemo(() => `${origins[0]}/api/latest-output`, [origins]);
 
   useEffect(() => {
     fetch(uri)
@@ -89,7 +96,7 @@ export function GamesList() {
         console.error("Error fetching data:", error);
         setError("Failed to fetch data");
       });
-  }, []);
+  }, [ origins, uri]);
 
   const formatPlayDuration = (duration: string) => {
     const match = duration.match(/PT(\d+H)?(\d+M)?(\d+S)?/);
@@ -132,11 +139,7 @@ export function GamesList() {
                   <CardTitle className="text-xl font-bold ">
                     <div className="flex flex-row items-center relative">
                       {title.service === "ps_plus" ? (
-                        <img
-                          src="/ps_plus.svg"
-                          alt="PS+"
-                          className="size-6 absolute -top-5 left-0"
-                        />
+                        <img src="/ps_plus.svg" alt="PS+" className="size-6 absolute -top-5 left-0" />
                       ) : null}
                       {title.service === "other" ? (
                         <DiscIcon className="size-4 absolute  -top-4 left-0" />
