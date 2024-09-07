@@ -14,6 +14,8 @@ services:
     build: 
       context: ./vite-frontend
       dockerfile: Dockerfile
+    environment:
+      - VITE_ALLOWED_ORIGINS=${VITE_ALLOWED_ORIGINS}
     ports:
       - "5173:5173"
     depends_on:
