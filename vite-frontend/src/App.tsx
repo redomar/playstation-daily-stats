@@ -1,9 +1,11 @@
+import { GamesList } from './components/games-list'
 import OutputDisplay from './components/OutputDisplay'
 
 function App() {
   return (
     <div className="App">
-      <OutputDisplay />
+      {/* <OutputDisplay /> */}
+      <GamesList />
     </div>
   )
 }
