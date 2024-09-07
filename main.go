@@ -50,7 +50,7 @@ func main() {
 	c := cors.New(cors.Options{
 		AllowedOrigins: allowedOrigins,
 	})
-	//log allowed origins
+
 	log.Println("Allowed Origins: ", allowedOrigins)
 
 	handler := c.Handler(mux)
