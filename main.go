@@ -41,7 +41,9 @@ func main() {
 		log.Fatal("NPSSO environment variable is not set")
 	}
 
-	go dailyFetch(npsso)
+	if err := fetchAndSaveData(npsso); err != nil {
+		log.Println("Error fetching and saving data:", err)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/latest-output", handleLatestOutput)
@@ -51,21 +53,20 @@ func main() {
 		AllowedOrigins: allowedOrigins,
 	})
 
-	log.Println("Allowed Origins: ", allowedOrigins)
-
 	handler := c.Handler(mux)
 
-	log.Println("Starting server on :8080")
-	log.Fatal(http.ListenAndServe(":8080", handler))
-}
+	server := &http.Server{
+		Addr:    ":8080",
+		Handler: handler,
+	}
 
-func dailyFetch(npsso string) {
-	for {
-		if err := fetchAndSaveData(npsso); err != nil {
-			log.Println("Error fetching and saving data:", err)
+	log.Println("Starting server on :8080")
+	if err := server.ListenAndServe(); err != nil {
+		if err == http.ErrServerClosed {
+			log.Println("Server closed")
+		} else {
+			log.Println("Error starting server:", err)
 		}
-		// Wait for 24 hours before the next fetch
-		time.Sleep(24 * time.Hour)
 	}
 }
 
@@ -121,11 +122,7 @@ func handleLatestOutput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Add filename to the top-level of the JSON
 	data["filename"] = latestFile.Name()
-
-	// file name can be this "output_1725731550.json" just print the unix timestamp, remove the "output_" part and the ".json" part
-
 	data["timestamp"] = latestFile.Name()[7 : len(latestFile.Name())-5]
 
 	w.Header().Set("Content-Type", "application/json")
