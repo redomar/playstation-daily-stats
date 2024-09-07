@@ -115,9 +115,22 @@ func handleLatestOutput(w http.ResponseWriter, r *http.Request) {
         return
     }
 
+    var data map[string]interface{}
+    if err := json.Unmarshal(content, &data); err != nil {
+        http.Error(w, "Unable to parse JSON content", http.StatusInternalServerError)
+        return
+    }
+
+    // Add filename to the top-level of the JSON
+    data["filename"] = latestFile.Name()
+
+	// file name can be this "output_1725731550.json" just print the unix timestamp, remove the "output_" part and the ".json" part
+
+	data["timestamp"] = latestFile.Name()[7:len(latestFile.Name())-5]
+	
+
     w.Header().Set("Content-Type", "application/json")
-    w.Header().Set("X-Filename", latestFile.Name()) // Add this line to include the filename in a header
-    w.Write(content)
+    json.NewEncoder(w).Encode(data)
 }
 
 // ... (rest of your functions remain the same)

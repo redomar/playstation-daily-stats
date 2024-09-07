@@ -1,11 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
-import {
-  Card,
-  CardContent,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardTitle } from "@/components/ui/card";
 
-import { DiscIcon } from '@radix-ui/react-icons'
+import { DiscIcon } from "@radix-ui/react-icons";
 
 interface LocalizedName {
   defaultLanguage: string;
@@ -58,6 +54,8 @@ interface Data {
   previousOffset: string;
   titles: Title[];
   totalItemCount: number;
+  timestamp: number;
+  filename: string;
 }
 
 function shortenString(str: string): string {
@@ -77,32 +75,32 @@ export function GamesList() {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const origins = useMemo(() => 
-    import.meta.env.VITE_ALLOWED_ORIGINS?.split(",") ?? [import.meta.env.VITE_ALLOWED_ORIGINS],
+  const origins = useMemo(
+    () =>
+      import.meta.env.VITE_ALLOWED_ORIGINS?.split(",") ?? [
+        import.meta.env.VITE_ALLOWED_ORIGINS,
+      ],
     []
   );
   const uri = useMemo(() => `${origins[0]}/api/latest-output`, [origins]);
 
   useEffect(() => {
-    fetch(uri)
-      .then((response) => {
+    const fetchData = async () => {
+      try {
+        const response = await fetch(uri);
         if (!response.ok) {
           throw new Error("Network response was not ok");
         }
-        console.log('All headers:');
-        for (const [key, value] of response.headers) {
-          console.log(`${key}: ${value}`);
-        }
-        const filename = response.headers.get('X-Filename');
-        console.log('X-Filename:', filename);
-        return response.json();
-      })
-      .then((data) => setData(data))
-      .catch((error) => {
+
+        setData(await response.json());
+      } catch (error) {
         console.error("Error fetching data:", error);
         setError("Failed to fetch data");
-      });
-  }, [origins, uri]);
+      }
+    };
+
+    fetchData();
+  }, [uri]);
 
   const formatPlayDuration = (duration: string) => {
     const match = duration.match(/PT(\d+H)?(\d+M)?(\d+S)?/);
@@ -124,6 +122,7 @@ export function GamesList() {
   return (
     <div className="w-full max-w-6xl mx-auto py-8">
       <h1 className="text-3xl font-bold mb-6">My Games</h1>
+      <h3>Last Updated: {new Date(data.timestamp*1000).toLocaleString()}</h3>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
         {data.titles
           .filter((title) => title.category.includes("game"))
@@ -145,7 +144,11 @@ export function GamesList() {
                   <CardTitle className="text-xl font-bold ">
                     <div className="flex flex-row items-center relative">
                       {title.service === "ps_plus" ? (
-                        <img src="/ps_plus.svg" alt="PS+" className="size-6 absolute -top-5 left-0" />
+                        <img
+                          src="/ps_plus.svg"
+                          alt="PS+"
+                          className="size-6 absolute -top-5 left-0"
+                        />
                       ) : null}
                       {title.service === "other" ? (
                         <DiscIcon className="size-4 absolute  -top-4 left-0" />
