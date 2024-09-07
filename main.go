@@ -93,30 +93,31 @@ func fetchAndSaveData(npsso string) error {
 }
 
 func handleLatestOutput(w http.ResponseWriter, r *http.Request) {
-	files, err := os.ReadDir(outputDir)
-	if err != nil {
-		http.Error(w, "Unable to read output directory", http.StatusInternalServerError)
-		return
-	}
+    files, err := os.ReadDir(outputDir)
+    if err != nil {
+        http.Error(w, "Unable to read output directory", http.StatusInternalServerError)
+        return
+    }
 
-	if len(files) == 0 {
-		http.Error(w, "No output files found", http.StatusNotFound)
-		return
-	}
+    if len(files) == 0 {
+        http.Error(w, "No output files found", http.StatusNotFound)
+        return
+    }
 
-	sort.Slice(files, func(i, j int) bool {
-		return files[i].Name() > files[j].Name()
-	})
+    sort.Slice(files, func(i, j int) bool {
+        return files[i].Name() > files[j].Name()
+    })
 
-	latestFile := files[0]
-	content, err := os.ReadFile(filepath.Join(outputDir, latestFile.Name()))
-	if err != nil {
-		http.Error(w, "Unable to read latest file", http.StatusInternalServerError)
-		return
-	}
+    latestFile := files[0]
+    content, err := os.ReadFile(filepath.Join(outputDir, latestFile.Name()))
+    if err != nil {
+        http.Error(w, "Unable to read latest file", http.StatusInternalServerError)
+        return
+    }
 
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(content)
+    w.Header().Set("Content-Type", "application/json")
+    w.Header().Set("X-Filename", latestFile.Name()) // Add this line to include the filename in a header
+    w.Write(content)
 }
 
 // ... (rest of your functions remain the same)

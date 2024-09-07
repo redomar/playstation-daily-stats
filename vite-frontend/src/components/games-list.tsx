@@ -89,6 +89,8 @@ export function GamesList() {
         if (!response.ok) {
           throw new Error("Network response was not ok");
         }
+        const filename = response.headers.get('X-Filename');
+        console.log('Latest filename:', filename);
         return response.json();
       })
       .then((data) => setData(data))
