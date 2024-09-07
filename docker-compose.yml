@@ -3,7 +3,7 @@ services:
   psn-app:
     build: .
     volumes:
-      - ./output:/app/output
+      - ../output:/app/output
     environment:
       - NPSSO=${NPSSO}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
