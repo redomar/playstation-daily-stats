@@ -89,8 +89,12 @@ export function GamesList() {
         if (!response.ok) {
           throw new Error("Network response was not ok");
         }
+        console.log('All headers:');
+        for (const [key, value] of response.headers) {
+          console.log(`${key}: ${value}`);
+        }
         const filename = response.headers.get('X-Filename');
-        console.log('Latest filename:', filename);
+        console.log('X-Filename:', filename);
         return response.json();
       })
       .then((data) => setData(data))
@@ -98,7 +102,7 @@ export function GamesList() {
         console.error("Error fetching data:", error);
         setError("Failed to fetch data");
       });
-  }, [ origins, uri]);
+  }, [origins, uri]);
 
   const formatPlayDuration = (duration: string) => {
     const match = duration.match(/PT(\d+H)?(\d+M)?(\d+S)?/);
