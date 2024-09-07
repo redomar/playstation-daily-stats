@@ -60,7 +60,7 @@ interface Data {
   totalItemCount: number;
 }
 
-function shortenString(str) {
+function shortenString(str: string): string {
   // Check if the string contains an underscore
   if (str.includes("_")) {
     return str
@@ -132,7 +132,6 @@ export function GamesList() {
                 <div className="flex-1">
                   <CardTitle className="text-xl font-bold ">
                     <div className="flex flex-row items-center relative">
-                      {console.log(title.service)}
                       {title.service === "ps_plus" ? (
                         <img src="/ps_plus.svg" alt="PS+" className="size-6 absolute -top-5 left-0" />
                       ) : null}
@@ -142,7 +141,6 @@ export function GamesList() {
                       <span className=" line-clamp-1">{title.name}</span>{" "}
                     </div>
                   </CardTitle>
-                  {title.titleId}
                   <p className="text-sm text-muted-foreground line-clamp-1">
                     {title.concept.genres
                       .map((genre) =>
