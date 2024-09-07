@@ -93,44 +93,43 @@ func fetchAndSaveData(npsso string) error {
 }
 
 func handleLatestOutput(w http.ResponseWriter, r *http.Request) {
-    files, err := os.ReadDir(outputDir)
-    if err != nil {
-        http.Error(w, "Unable to read output directory", http.StatusInternalServerError)
-        return
-    }
+	files, err := os.ReadDir(outputDir)
+	if err != nil {
+		http.Error(w, "Unable to read output directory", http.StatusInternalServerError)
+		return
+	}
 
-    if len(files) == 0 {
-        http.Error(w, "No output files found", http.StatusNotFound)
-        return
-    }
+	if len(files) == 0 {
+		http.Error(w, "No output files found", http.StatusNotFound)
+		return
+	}
 
-    sort.Slice(files, func(i, j int) bool {
-        return files[i].Name() > files[j].Name()
-    })
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Name() > files[j].Name()
+	})
 
-    latestFile := files[0]
-    content, err := os.ReadFile(filepath.Join(outputDir, latestFile.Name()))
-    if err != nil {
-        http.Error(w, "Unable to read latest file", http.StatusInternalServerError)
-        return
-    }
+	latestFile := files[0]
+	content, err := os.ReadFile(filepath.Join(outputDir, latestFile.Name()))
+	if err != nil {
+		http.Error(w, "Unable to read latest file", http.StatusInternalServerError)
+		return
+	}
 
-    var data map[string]interface{}
-    if err := json.Unmarshal(content, &data); err != nil {
-        http.Error(w, "Unable to parse JSON content", http.StatusInternalServerError)
-        return
-    }
+	var data map[string]interface{}
+	if err := json.Unmarshal(content, &data); err != nil {
+		http.Error(w, "Unable to parse JSON content", http.StatusInternalServerError)
+		return
+	}
 
-    // Add filename to the top-level of the JSON
-    data["filename"] = latestFile.Name()
+	// Add filename to the top-level of the JSON
+	data["filename"] = latestFile.Name()
 
 	// file name can be this "output_1725731550.json" just print the unix timestamp, remove the "output_" part and the ".json" part
 
-	data["timestamp"] = latestFile.Name()[7:len(latestFile.Name())-5]
-	
+	data["timestamp"] = latestFile.Name()[7 : len(latestFile.Name())-5]
 
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(data)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(data)
 }
 
 // ... (rest of your functions remain the same)
