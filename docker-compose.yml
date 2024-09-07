@@ -1,6 +1,6 @@
 version: '3'
 services:
-  psn-app:
+  psn-service:
     build: .
     volumes:
       - ../output:/app/output
@@ -10,7 +10,7 @@ services:
     ports:
       - "8080:8080"
 
-  vite-frontend:
+  psn-frontend:
     build: 
       context: ./vite-frontend
       dockerfile: Dockerfile
@@ -19,4 +19,4 @@ services:
     ports:
       - "5173:5173"
     depends_on:
-      - psn-app
+      - psn-service
