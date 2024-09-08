@@ -45,15 +45,17 @@ func main() {
 		log.Println("Error fetching and saving data:", err)
 	}
 
+	startServer()
+}
+
+func startServer() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/latest-output", handleLatestOutput)
 
 	allowedOrigins := strings.Split(os.Getenv("ALLOWED_ORIGINS"), ",")
-	c := cors.New(cors.Options{
+	handler := cors.New(cors.Options{
 		AllowedOrigins: allowedOrigins,
-	})
-
-	handler := c.Handler(mux)
+	}).Handler(mux)
 
 	server := &http.Server{
 		Addr:    ":8080",
@@ -61,12 +63,8 @@ func main() {
 	}
 
 	log.Println("Starting server on :8080")
-	if err := server.ListenAndServe(); err != nil {
-		if err == http.ErrServerClosed {
-			log.Println("Server closed")
-		} else {
-			log.Println("Error starting server:", err)
-		}
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Println("Error starting server:", err)
 	}
 }
 
@@ -129,7 +127,6 @@ func handleLatestOutput(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(data)
 }
 
-// ... (rest of your functions remain the same)
 func getValidToken(npsso string) (string, error) {
 	tokenInfo, err := loadTokenFromFile()
 	if err == nil && time.Now().Before(tokenInfo.ExpiresAt) {
@@ -146,22 +143,20 @@ func getValidToken(npsso string) (string, error) {
 		ExpiresAt:   time.Now().Add(1 * time.Hour),
 	}
 
-	err = saveTokenToFile(tokenInfo)
-	if err != nil {
-		fmt.Println("Warning: Failed to save token to file:", err)
+	if err := saveTokenToFile(tokenInfo); err != nil {
+		log.Println("Warning: Failed to save token to file:", err)
 	}
 
 	return token, nil
 }
 
 func loadTokenFromFile() (TokenInfo, error) {
-	var tokenInfo TokenInfo
 	data, err := os.ReadFile(tokenFile)
 	if err != nil {
-		return tokenInfo, err
+		return TokenInfo{}, err
 	}
-	err = json.Unmarshal(data, &tokenInfo)
-	return tokenInfo, err
+	var tokenInfo TokenInfo
+	return tokenInfo, json.Unmarshal(data, &tokenInfo)
 }
 
 func saveTokenToFile(tokenInfo TokenInfo) error {
@@ -173,19 +168,12 @@ func saveTokenToFile(tokenInfo TokenInfo) error {
 }
 
 func getAuthenticationToken(npsso string) (string, error) {
-	// Step 1: Get the authorization code
 	authCode, err := getAuthorizationCode(npsso)
 	if err != nil {
 		return "", fmt.Errorf("error getting authorization code: %w", err)
 	}
 
-	// Step 2: Exchange the authorization code for an access token
-	token, err := exchangeCodeForToken(authCode)
-	if err != nil {
-		return "", fmt.Errorf("error exchanging code for token: %w", err)
-	}
-
-	return token, nil
+	return exchangeCodeForToken(authCode)
 }
 
 func getAuthorizationCode(npsso string) (string, error) {
@@ -287,10 +275,5 @@ func makeAuthorizedRequest(url, token string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	return body, nil
+	return io.ReadAll(resp.Body)
 }
