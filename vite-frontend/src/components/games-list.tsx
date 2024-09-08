@@ -119,7 +119,12 @@ export function GamesList() {
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString();
+    const date = new Date(dateString);
+    const year = date.getFullYear();
+    const month = date.toLocaleDateString("en-GB", { month: "short" });
+    const day = date.getDate();
+
+    return `${day}${day.nth()} ${month} ${year}`;
   };
 
   if (error) return <div className="text-red-500">Error: {error}</div>;
