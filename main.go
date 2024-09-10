@@ -41,11 +41,28 @@ func main() {
 		log.Fatal("NPSSO environment variable is not set")
 	}
 
+	// Run the initial fetch
 	if err := fetchAndSaveData(npsso); err != nil {
 		log.Println("Error fetching and saving data:", err)
 	}
 
+	// Start the scheduled fetch in a goroutine
+	go scheduledFetch(npsso)
+
+	// Start the server
 	startServer()
+}
+
+func scheduledFetch(npsso string) {
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		if err := fetchAndSaveData(npsso); err != nil {
+			log.Println("Error fetching and saving data:", err)
+		}
+		<-ticker.C
+	}
 }
 
 func startServer() {
