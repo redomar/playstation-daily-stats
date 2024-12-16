@@ -1,4 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Line, ComposedChart, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
+
 import {
   Card,
   CardContent,
@@ -103,6 +105,8 @@ export function GamesList() {
   const [sortBy, setSortBy] = useState<string>("lastPlayed");
   const [filterGenre, setFilterGenre] = useState<string>("all");
   const [filterService, setFilterService] = useState<string>("all");
+  const [scaleType, setScaleType] = useState<'log' | 'linear'>('log');
+  
 
   const origins = useMemo(
     () =>
@@ -216,6 +220,49 @@ export function GamesList() {
 
     return `${day}${day.nth()} ${month} ${year}`;
   };
+  const getChartData = (titles: Title[]) => {
+    const filteredData = titles
+      .filter(title => title.category.includes("game"))
+      .filter(title => parseInt(title.playDuration.match(/PT(\d+)H/)?.[1] || "0") > 0)
+      .map(title => {
+        const hours = parseInt(title.playDuration.match(/PT(\d+)H/)?.[1] || "0");
+        return {
+          name: title.name.length > 20 ? title.name.substring(0, 20) + '...' : title.name,
+          hours: hours === 0 ? 0.1 : hours,
+          display: hours,
+          linear: hours
+        };
+      })
+      .sort((a, b) => a.hours - b.hours);
+  
+    // Calculate average
+    const average = filteredData.reduce((acc, curr) => acc + curr.hours, 0) / filteredData.length;
+  
+    // Calculate median index
+    const medianIndex = Math.floor((filteredData.length - 1) / 2);
+  
+    // Mark median bar
+    return filteredData.map((item, index) => ({
+      ...item,
+      isMedian: index === medianIndex,
+      average
+    }));
+  };
+  // Custom tooltip to show actual hours instead of log values
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-background p-2 border rounded-lg shadow-lg">
+          <p className="font-medium">{label}</p>
+          <p className="text-sm">{`Hours: ${payload[0].payload.display}`}</p>
+          {payload[0].payload.isMedian && (
+            <p className="text-sm text-green-500 font-medium">Median Value</p>
+          )}
+        </div>
+      );
+    }
+    return null;
+  };
 
   if (error) return <div className="text-red-500">Error: {error}</div>;
   if (!data) return <div className="text-gray-500">Loading...</div>;
@@ -269,8 +316,83 @@ export function GamesList() {
             </div>
           </Card>
         </div>
-
-        <DropdownMenu>
+        <Card className="p-4 w-full mb-6">
+        <Card className="p-4 w-full mb-6">
+  <CardHeader>
+    <CardTitle>Play Time Distribution (Log Scale)</CardTitle>
+    <CardDescription>Hours played per game with linear trend</CardDescription>
+  </CardHeader>
+  <CardContent className="w-full h-[400px]">
+    <ResponsiveContainer width="100%" height="100%">
+    <ComposedChart data={getChartData(filterTitles(data.titles))}>
+  <CartesianGrid strokeDasharray="3 3" />
+  <XAxis 
+    dataKey="name" 
+    angle={-45}
+    textAnchor="end"
+    height={100}
+    interval={0}
+    fontSize={12}
+  />
+<YAxis 
+  yAxisId="left"
+  scale={scaleType}
+  domain={scaleType === 'log' ? [0.8, 'auto'] : [0, 'auto']}
+  tickFormatter={(value) => Math.round(value).toString()}
+  label={{ 
+    value: `Hours (${scaleType} scale)`, 
+    angle: -90, 
+    position: 'insideLeft' 
+  }}
+/>
+  <YAxis 
+    yAxisId="right"
+    orientation="right"
+    domain={[0, 'auto']}
+  />
+  <Tooltip content={<CustomTooltip />} />
+  <Bar 
+    yAxisId="left"
+    dataKey="hours" 
+    name="Hours Played"
+  >
+    {
+      getChartData(filterTitles(data.titles)).map((entry, index) => (
+        <Cell 
+          key={`cell-${index}`}
+          fill={entry.isMedian ? '#efc55e' : '#ef4444'} 
+          opacity={0.8}
+        />
+      ))
+    }
+  </Bar>
+  <Line
+    yAxisId="right"
+    type="monotone"
+    dataKey="linear"
+    stroke="#000000"
+    strokeWidth={2}
+    dot={false}
+    name="Linear Trend"
+  />
+  <ReferenceLine 
+    y={getChartData(filterTitles(data.titles))[0]?.average} 
+    yAxisId="left"
+    stroke="#3b82f6"
+    strokeDasharray="3 3"
+    label={{ 
+      value: 'Average', 
+      position: 'right',
+      fill: '#3b82f6'
+    }}
+  />
+</ComposedChart>
+    </ResponsiveContainer>
+  </CardContent>
+</Card>
+</Card>
+<div className="flex items-center gap-2">
+<DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="flex items-center gap-2">
               {/* <FilterIcon className="h-4 w-4" /> */}
@@ -343,7 +465,16 @@ export function GamesList() {
               </Button>
             </span>
           </DropdownMenuContent>
-        </DropdownMenu>
+          </DropdownMenu>
+
+<Button
+  variant="outline"
+  className="flex items-center gap-2"
+  onClick={() => setScaleType(scaleType === 'log' ? 'linear' : 'log')}
+>
+  {scaleType === 'log' ? 'Log Scale' : 'Linear Scale'}
+</Button>
+</div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 xl:gap-4">
