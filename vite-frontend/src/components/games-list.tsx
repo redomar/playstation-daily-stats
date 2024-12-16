@@ -16,13 +16,12 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
-import { FilterIcon } from "lucide-react";
+import { FilterIcon, FilterXIcon } from "lucide-react";
 import { DiscIcon } from "@radix-ui/react-icons";
 
 interface LocalizedName {
@@ -79,6 +78,14 @@ interface Data {
   timestamp: number;
   filename: string;
 }
+
+const serviceMap = new Map([
+  ["none(purchased)", "Digital Licence"],
+  ["other", "Physical or Other Licence"],
+  ["ps_plus", "PlayStation Plus"],
+  ["ea_access", "EA Access"],
+  ["none_purchased", "Unknown"],
+]) as Map<string, string>;
 
 function shortenString(str: string): string {
   if (str.includes("_")) {
@@ -214,76 +221,20 @@ export function GamesList() {
   if (!data) return <div className="text-gray-500">Loading...</div>;
 
   return (
-    <div className="w-full max-w-6xl mx-auto py-8">
+    <div className="w-full max-w-6xl xl:max-w-screen-2xl px-8 mx-auto py-8">
       <h1 className="text-3xl font-bold mb-6">My Games</h1>
-      <Card className="bg-background rounded-lg overflow-hidden mb-4">
-        <CardHeader>
-          <CardTitle>
-            <h3>Last Updated</h3>
-          </CardTitle>
-          <CardDescription>
-            {new Date(data.timestamp * 1000).toLocaleString()}
-          </CardDescription>
-        </CardHeader>
-      </Card>
-
       <div className="mb-6 space-y-4">
         <div className="flex flex-wrap gap-4">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="flex items-center gap-2">
-                <FilterIcon className="h-4 w-4" />
-                Filters & Sort
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent className="w-56">
-              <DropdownMenuLabel>Sort By</DropdownMenuLabel>
-              <Select value={sortBy} onValueChange={setSortBy}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="lastPlayed">Last Played</SelectItem>
-                  <SelectItem value="mostPlayed">Most Played</SelectItem>
-                  <SelectItem value="playTime">Play Time</SelectItem>
-                  <SelectItem value="name">Name</SelectItem>
-                </SelectContent>
-              </Select>
-
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel>Filter by Genre</DropdownMenuLabel>
-              <Select value={filterGenre} onValueChange={setFilterGenre}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Genres</SelectItem>
-                  {getAllGenres(data.titles).map((genre) => (
-                    <SelectItem key={genre} value={genre}>
-                      {shortenString(genre)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel>Filter by Service</DropdownMenuLabel>
-              <Select value={filterService} onValueChange={setFilterService}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Services</SelectItem>
-                  {getAllServices(data.titles).map((service) => (
-                    <SelectItem key={service} value={service}>
-                      {service}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </DropdownMenuContent>
-          </DropdownMenu>
-
+          <Card className="bg-background rounded-lg overflow-hidden">
+            <CardHeader>
+              <CardTitle>
+                <h3>Last Updated</h3>
+              </CardTitle>
+              <CardDescription>
+                {new Date(data.timestamp * 1000).toLocaleString()}
+              </CardDescription>
+            </CardHeader>
+          </Card>
           <Card className="p-4">
             <div className="flex gap-6">
               {(() => {
@@ -318,9 +269,84 @@ export function GamesList() {
             </div>
           </Card>
         </div>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" className="flex items-center gap-2">
+              {/* <FilterIcon className="h-4 w-4" /> */}
+              {isNotFiltered() ? (
+                <FilterXIcon className="h-4 w-4" />
+              ) : (
+                <FilterIcon className="h-4 w-4" />
+              )}
+              Filters & Sort
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="w-56">
+            <DropdownMenuLabel>Sort By</DropdownMenuLabel>
+            <Select value={sortBy} onValueChange={setSortBy}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="lastPlayed">Last Played</SelectItem>
+                <SelectItem value="mostPlayed">Most Played</SelectItem>
+                <SelectItem value="playTime">Play Time</SelectItem>
+                <SelectItem value="name">Name</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <DropdownMenuLabel>Filter by Genre</DropdownMenuLabel>
+            <Select value={filterGenre} onValueChange={setFilterGenre}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Genres</SelectItem>
+                {getAllGenres(data.titles).map((genre) => (
+                  <SelectItem key={genre} value={genre}>
+                    {shortenString(genre)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <DropdownMenuLabel>Filter by Service</DropdownMenuLabel>
+            <Select value={filterService} onValueChange={setFilterService}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Services</SelectItem>
+                {getAllServices(data.titles).map((service) => (
+                  <SelectItem key={service} value={service}>
+                    {serviceMap.has(service)
+                      ? serviceMap.get(service)
+                      : service}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <span className={isNotFiltered()}>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Clear</DropdownMenuLabel>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => {
+                  setSortBy("lastPlayed");
+                  setFilterGenre("all");
+                  setFilterService("all");
+                }}
+              >
+                Clear Filters
+              </Button>
+            </span>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 xl:gap-4">
         {sortTitles(filterTitles(data.titles))
           .filter((title) => title.category.includes("game"))
           .map((title, index) => (
@@ -328,7 +354,7 @@ export function GamesList() {
               key={index}
               className="bg-background rounded-lg overflow-hidden"
             >
-              <div className="flex items-center gap-4 p-4 border-b">
+              <div className="flex items-center gap-4 p-4 xl:p-2 xl:gap-2 border-b">
                 <img
                   src={title.localizedImageUrl}
                   alt={title.name}
@@ -350,7 +376,9 @@ export function GamesList() {
                       {title.service === "other" ? (
                         <DiscIcon className="size-4 absolute -top-4 left-0" />
                       ) : null}
-                      <span className="line-clamp-1">{title.name}</span>
+                      <span className="line-clamp-1 hover:line-clamp-none">
+                        {title.name}
+                      </span>
                     </div>
                   </CardTitle>
                   <p className="text-sm text-muted-foreground line-clamp-1">
@@ -362,7 +390,7 @@ export function GamesList() {
                   </p>
                 </div>
               </div>
-              <CardContent className="grid grid-cols-2 gap-4 p-4">
+              <CardContent className="grid grid-cols-2 gap-4 p-4 xl:p-2 xl:gap-2">
                 <div>
                   <p className="text-sm text-muted-foreground">Play Count</p>
                   <p className="text-lg font-medium">{title.playCount}</p>
@@ -391,4 +419,12 @@ export function GamesList() {
       </div>
     </div>
   );
+
+  function isNotFiltered(): string | undefined {
+    return sortBy === "lastPlayed" &&
+      filterGenre === "all" &&
+      filterService === "all"
+      ? "hidden"
+      : "";
+  }
 }
