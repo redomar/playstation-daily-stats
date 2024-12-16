@@ -6,7 +6,23 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
+import { FilterIcon } from "lucide-react";
 import { DiscIcon } from "@radix-ui/react-icons";
 
 interface LocalizedName {
@@ -65,21 +81,21 @@ interface Data {
 }
 
 function shortenString(str: string): string {
-  // Check if the string contains an underscore
   if (str.includes("_")) {
     return str
-      .split("_") // Split the string by underscores
-      .map((word) => word[0]) // Take the first letter of each word
-      .join(""); // Join them together to form the shortened string
+      .split("_")
+      .map((word) => word[0])
+      .join("");
   }
-
-  // If no underscore, return the original string unchanged
   return str;
 }
 
 export function GamesList() {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<string>("lastPlayed");
+  const [filterGenre, setFilterGenre] = useState<string>("all");
+  const [filterService, setFilterService] = useState<string>("all");
 
   const origins = useMemo(
     () =>
@@ -97,7 +113,6 @@ export function GamesList() {
         if (!response.ok) {
           throw new Error("Network response was not ok");
         }
-
         setData(await response.json());
       } catch (error) {
         console.error("Error fetching data:", error);
@@ -107,6 +122,74 @@ export function GamesList() {
 
     fetchData();
   }, [uri]);
+
+  const getAllGenres = (titles: Title[]) => {
+    const genres = new Set<string>();
+    titles.forEach((title) =>
+      title.concept.genres.forEach((genre) => genres.add(genre))
+    );
+    return Array.from(genres);
+  };
+
+  const getAllServices = (titles: Title[]) => {
+    const services = new Set<string>();
+    titles.forEach((title) => services.add(title.service));
+    return Array.from(services);
+  };
+
+  const sortTitles = (titles: Title[]) => {
+    return [...titles].sort((a, b) => {
+      switch (sortBy) {
+        case "lastPlayed":
+          return (
+            new Date(b.lastPlayedDateTime).getTime() -
+            new Date(a.lastPlayedDateTime).getTime()
+          );
+        case "mostPlayed":
+          return b.playCount - a.playCount;
+        case "playTime": {
+          const getDurationInSeconds = (duration: string) => {
+            const match = duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+            if (!match) return 0;
+            const hours = parseInt(match[1] || "0") * 3600;
+            const minutes = parseInt(match[2] || "0") * 60;
+            const seconds = parseInt(match[3] || "0");
+            return hours + minutes + seconds;
+          };
+          return (
+            getDurationInSeconds(b.playDuration) -
+            getDurationInSeconds(a.playDuration)
+          );
+        }
+        case "name":
+          return a.name.localeCompare(b.name);
+        default:
+          return 0;
+      }
+    });
+  };
+
+  const filterTitles = (titles: Title[]) => {
+    return titles.filter((title) => {
+      const genreMatch =
+        filterGenre === "all" || title.concept.genres.includes(filterGenre);
+      const serviceMatch =
+        filterService === "all" || title.service === filterService;
+      return genreMatch && serviceMatch;
+    });
+  };
+
+  const getAggregations = (titles: Title[]) => {
+    return {
+      totalGames: titles.length,
+      totalPlayTime: titles.reduce(
+        (acc, title) =>
+          acc + parseInt(title.playDuration.match(/PT(\d+)H/)?.[1] || "0"),
+        0
+      ),
+      totalPlayCount: titles.reduce((acc, title) => acc + title.playCount, 0),
+    };
+  };
 
   const formatPlayDuration = (duration: string) => {
     const match = duration.match(/PT(\d+H)?(\d+M)?(\d+S)?/);
@@ -143,13 +226,107 @@ export function GamesList() {
           </CardDescription>
         </CardHeader>
       </Card>
+
+      <div className="mb-6 space-y-4">
+        <div className="flex flex-wrap gap-4">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="flex items-center gap-2">
+                <FilterIcon className="h-4 w-4" />
+                Filters & Sort
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="w-56">
+              <DropdownMenuLabel>Sort By</DropdownMenuLabel>
+              <Select value={sortBy} onValueChange={setSortBy}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="lastPlayed">Last Played</SelectItem>
+                  <SelectItem value="mostPlayed">Most Played</SelectItem>
+                  <SelectItem value="playTime">Play Time</SelectItem>
+                  <SelectItem value="name">Name</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Filter by Genre</DropdownMenuLabel>
+              <Select value={filterGenre} onValueChange={setFilterGenre}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Genres</SelectItem>
+                  {getAllGenres(data.titles).map((genre) => (
+                    <SelectItem key={genre} value={genre}>
+                      {shortenString(genre)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Filter by Service</DropdownMenuLabel>
+              <Select value={filterService} onValueChange={setFilterService}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Services</SelectItem>
+                  {getAllServices(data.titles).map((service) => (
+                    <SelectItem key={service} value={service}>
+                      {service}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <Card className="p-4">
+            <div className="flex gap-6">
+              {(() => {
+                const agg = getAggregations(filterTitles(data.titles));
+                return (
+                  <>
+                    <div>
+                      <p className="text-sm text-muted-foreground">
+                        Total Games
+                      </p>
+                      <p className="text-lg font-medium">{agg.totalGames}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">
+                        Total Play Time
+                      </p>
+                      <p className="text-lg font-medium">
+                        {agg.totalPlayTime}h
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">
+                        Total Plays
+                      </p>
+                      <p className="text-lg font-medium">
+                        {agg.totalPlayCount}
+                      </p>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          </Card>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-        {data.titles
+        {sortTitles(filterTitles(data.titles))
           .filter((title) => title.category.includes("game"))
           .map((title, index) => (
             <Card
               key={index}
-              className="bg-background rounded-lg   overflow-hidden"
+              className="bg-background rounded-lg overflow-hidden"
             >
               <div className="flex items-center gap-4 p-4 border-b">
                 <img
@@ -161,7 +338,7 @@ export function GamesList() {
                   style={{ aspectRatio: "80/80", objectFit: "cover" }}
                 />
                 <div className="flex-1">
-                  <CardTitle className="text-xl font-bold ">
+                  <CardTitle className="text-xl font-bold">
                     <div className="flex flex-row items-center relative">
                       {title.service === "ps_plus" ? (
                         <img
@@ -171,9 +348,9 @@ export function GamesList() {
                         />
                       ) : null}
                       {title.service === "other" ? (
-                        <DiscIcon className="size-4 absolute  -top-4 left-0" />
+                        <DiscIcon className="size-4 absolute -top-4 left-0" />
                       ) : null}
-                      <span className=" line-clamp-1">{title.name}</span>{" "}
+                      <span className="line-clamp-1">{title.name}</span>
                     </div>
                   </CardTitle>
                   <p className="text-sm text-muted-foreground line-clamp-1">

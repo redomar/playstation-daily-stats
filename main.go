@@ -23,7 +23,7 @@ const (
 	clientSecret = "ucPjka5tntB2KqsP"
 	redirectURI  = "com.scee.psxandroid.scecompcall://redirect"
 	tokenFile    = "token.json"
-	outputDir    = "/app/output"
+	outputDir    = "output/"
 )
 
 type TokenInfo struct {
@@ -86,26 +86,60 @@ func startServer() {
 }
 
 func fetchAndSaveData(npsso string) error {
-	token, err := getValidToken(npsso)
-	if err != nil {
-		return fmt.Errorf("error getting valid token: %w", err)
-	}
+    token, err := getValidToken(npsso)
+    if err != nil {
+        return fmt.Errorf("error getting valid token: %w", err)
+    }
 
-	log.Println("Valid Authentication Token obtained")
+    log.Println("Valid Authentication Token obtained")
 
-	testURI := "https://m.np.playstation.com/api/gamelist/v2/users/me/titles?limit=200"
-	resp, err := makeAuthorizedRequest(testURI, token)
-	if err != nil {
-		return fmt.Errorf("error making authorized request: %w", err)
-	}
+    // Create base URL
+    baseURI := "https://m.np.playstation.com/api/gamelist/v2/users/me/titles"
+    
+    // Make requests with different offsets and combine the results
+    var allData []json.RawMessage
+    offsets := []int{0, 200, 400}
+    
+    for _, offset := range offsets {
+        testURI := fmt.Sprintf("%s?limit=200&offset=%d", baseURI, offset)
+        resp, err := makeAuthorizedRequest(testURI, token)
+        if err != nil {
+            return fmt.Errorf("error making authorized request with offset %d: %w", offset, err)
+        }
 
-	filename := fmt.Sprintf("output_%d.json", time.Now().Unix())
-	if err := os.WriteFile(filepath.Join(outputDir, filename), resp, 0600); err != nil {
-		return fmt.Errorf("error saving resource to file: %w", err)
-	}
+        var data map[string]json.RawMessage
+        if err := json.Unmarshal(resp, &data); err != nil {
+            return fmt.Errorf("error parsing JSON response: %w", err)
+        }
 
-	log.Printf("Data fetched and saved to %s\n", filename)
-	return nil
+        // Extract titles array from the response
+        if titles, ok := data["titles"]; ok {
+            var titlesArray []json.RawMessage
+            if err := json.Unmarshal(titles, &titlesArray); err != nil {
+                return fmt.Errorf("error parsing titles array: %w", err)
+            }
+            allData = append(allData, titlesArray...)
+        }
+    }
+
+    // Create final combined response
+    finalResponse := map[string]interface{}{
+        "titles": allData,
+    }
+
+    // Convert to JSON
+    combinedJSON, err := json.Marshal(finalResponse)
+    if err != nil {
+        return fmt.Errorf("error marshaling combined data: %w", err)
+    }
+
+    filename := fmt.Sprintf("output_%d.json", time.Now().Unix())
+    if err := os.WriteFile(filepath.Join(outputDir, filename), combinedJSON, 0600); err != nil {
+        return fmt.Errorf("error saving resource to file: %w", err)
+    }
+
+    log.Printf("Data fetched and saved to %s\n", filename)
+    return nil
 }
 
 func handleLatestOutput(w http.ResponseWriter, r *http.Request) {
