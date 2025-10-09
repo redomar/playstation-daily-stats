@@ -1,9 +1,11 @@
 version: '3'
 services:
-  psn-service:
-    build: .
+  psn-backend:
+    build:
+      context: ./packages/backend
+      dockerfile: Dockerfile
     volumes:
-      - ../output:/app/output
+      - ./output:/app/output
     environment:
       - NPSSO=${NPSSO}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
@@ -11,12 +13,12 @@ services:
       - "8080:8080"
 
   psn-frontend:
-    build: 
-      context: ./vite-frontend
+    build:
+      context: ./packages/frontend
       dockerfile: Dockerfile
     environment:
       - VITE_ALLOWED_ORIGINS=${VITE_ALLOWED_ORIGINS}
     ports:
       - "5173:5173"
     depends_on:
-      - psn-service
+      - psn-backend

@@ -1,0 +1,21 @@
+{
+  "name": "psn-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:frontend": "npm run dev --workspace=packages/frontend",
+    "dev:backend": "cd packages/backend && go run .",
+    "build:frontend": "npm run build --workspace=packages/frontend",
+    "build:backend": "cd packages/backend && go build -o main .",
+    "docker:up": "docker-compose up --build",
+    "docker:down": "docker-compose down"
+  },
+  "description": "PlayStation Network game data collector",
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=10.0.0"
+  }
+}

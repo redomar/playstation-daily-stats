@@ -1,12 +1,23 @@
-# go and vite and node and other crap
-node_modules
-dist
-.DS_Store
+# Dependencies
+node_modules/
+packages/*/node_modules/
 
-# local env files
+# Build outputs
+dist/
+packages/*/dist/
+packages/backend/main
+
+# Environment files
+.env
 .env.local
 .env.*.local
-.env
+
+# Output data
+output/
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json
 
 # Log files
 npm-debug.log*
@@ -14,20 +25,37 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Output
-dist
-out
-output
-
-
-# Editor directories and files
-.idea
+# IDE & Editors
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
-*.vscode
 
-# specific
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*.stackdump
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+
+# Specific
 token.json

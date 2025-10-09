@@ -35,14 +35,26 @@ func startAPIMode(npsso string) {
 }
 
 func scheduledFetch(npsso string) {
-	ticker := time.NewTicker(24 * time.Hour)
-	defer ticker.Stop()
-
 	for {
+		// Calculate time until next 6am
+		now := time.Now()
+		next6am := time.Date(now.Year(), now.Month(), now.Day(), 6, 0, 0, 0, now.Location())
+
+		// If it's already past 6am today, schedule for tomorrow
+		if now.After(next6am) {
+			next6am = next6am.Add(24 * time.Hour)
+		}
+
+		duration := next6am.Sub(now)
+		log.Printf("Next fetch scheduled at %v (in %v)", next6am.Format("2006-01-02 15:04:05"), duration)
+
+		// Wait until 6am
+		time.Sleep(duration)
+
+		// Fetch data
 		if err := fetchAndSaveData(npsso); err != nil {
 			log.Println("Error fetching and saving data:", err)
 		}
-		<-ticker.C
 	}
 }
 

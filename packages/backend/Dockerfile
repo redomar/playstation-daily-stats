@@ -1,4 +1,4 @@
-FROM golang:1.20-alpine
+FROM golang:1.23-alpine
 
 WORKDIR /app
 
@@ -20,8 +20,6 @@ RUN mkdir /app/output
 # Set the timezone to UTC
 ENV TZ=UTC
 
-# if .env file exists, copy it to the container
-COPY .env /app/.env
-
 # Run the application
+# Environment variables are passed via docker-compose.yml
 CMD ["./main"]
