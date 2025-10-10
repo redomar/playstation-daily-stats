@@ -5,7 +5,7 @@ services:
       context: ./packages/backend
       dockerfile: Dockerfile
     volumes:
-      - ./output:/app/output
+      - psn-output-data:/app/output
     environment:
       - NPSSO=${NPSSO}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
@@ -22,3 +22,7 @@ services:
       - "5173:5173"
     depends_on:
       - psn-backend
+
+volumes:
+  psn-output-data:
+    driver: local
