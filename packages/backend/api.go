@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -32,6 +33,38 @@ func startAPIMode(npsso string) {
 
 	// Start the server
 	startServer()
+}
+
+func hasRecentSnapshot(maxAge time.Duration) bool {
+	files, err := os.ReadDir(outputDir)
+	if err != nil {
+		log.Println("Warning: Could not read output directory:", err)
+		return false
+	}
+
+	now := time.Now()
+	for _, file := range files {
+		if !strings.HasPrefix(file.Name(), "output_") || !strings.HasSuffix(file.Name(), ".json") {
+			continue
+		}
+
+		// Extract timestamp from filename: output_1234567890.json
+		timestampStr := file.Name()[7 : len(file.Name())-5]
+		timestamp, err := strconv.ParseInt(timestampStr, 10, 64)
+		if err != nil {
+			continue
+		}
+
+		fileTime := time.Unix(timestamp, 0)
+		age := now.Sub(fileTime)
+
+		if age < maxAge {
+			log.Printf("Found recent snapshot: %s (age: %v)", file.Name(), age)
+			return true
+		}
+	}
+
+	return false
 }
 
 func scheduledFetch(npsso string) {
@@ -59,6 +92,12 @@ func scheduledFetch(npsso string) {
 }
 
 func fetchAndSaveData(npsso string) error {
+	// Check if we have a recent snapshot (within 12 hours)
+	if hasRecentSnapshot(12 * time.Hour) {
+		log.Println("Recent snapshot found (< 12 hours old), skipping fetch to avoid rate limiting")
+		return nil
+	}
+
 	token, err := getValidToken(npsso)
 	if err != nil {
 		return fmt.Errorf("error getting valid token: %w", err)
