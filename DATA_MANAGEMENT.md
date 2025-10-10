@@ -3,6 +3,7 @@
 ## Volume Strategy
 
 The PlayStation stats data is stored in a Docker named volume called `psn-output-data`. This ensures:
+
 - **Data persistence** across container restarts and rebuilds
 - **Data safety** - volume is managed by Docker and not deleted on container removal
 - **Consistency** - same approach works locally and in production
@@ -10,13 +11,16 @@ The PlayStation stats data is stored in a Docker named volume called `psn-output
 ## Production Data Location
 
 ### Permanent Storage
+
 On the production server (`psn.rx1.uk` / koronto), data is stored at:
+
 - **Primary location**: `/opt/psn-data/` (permanent, survives redeployments)
 - **Docker volume**: Managed by Dokploy, linked to deployment ID
 
 The `/opt/psn-data/` directory is independent of Dokploy's deployment system and will persist even if the service is redeployed with a new ID.
 
 ### Current Stats
+
 - **Files**: ~378 snapshots
 - **Size**: ~264MB
 - **History**: 400+ days of gaming data
@@ -27,23 +31,27 @@ The `/opt/psn-data/` directory is independent of Dokploy's deployment system and
 If the deployment is recreated and data is missing:
 
 1. SSH to the server:
+
 ```bash
 ssh koronto
 ```
 
 2. Check if permanent data exists:
+
 ```bash
 ls -lh /opt/psn-data/*.json | wc -l
 # Should show 378+ files
 ```
 
 3. Find the new Docker volume name:
+
 ```bash
 docker volume ls | grep psn-output-data
 # Will show something like: playstation-stats-service-XXXXX_psn-output-data
 ```
 
 4. Copy data to the new volume:
+
 ```bash
 docker run --rm \
   -v /opt/psn-data:/source \
@@ -52,6 +60,7 @@ docker run --rm \
 ```
 
 5. Restart the backend:
+
 ```bash
 docker restart playstation-stats-service-XXXXX-psn-backend-1
 ```
@@ -59,9 +68,11 @@ docker restart playstation-stats-service-XXXXX-psn-backend-1
 ## Local Development
 
 ### Using the Named Volume
+
 The docker-compose.yml uses a named volume `psn-output-data` which Docker creates automatically.
 
 ### Restoring from Backup
+
 If you need to restore data from the backup:
 
 ```bash
@@ -71,7 +82,7 @@ docker-compose down
 # Find the volume name
 docker volume ls | grep psn
 
-# Copy backup data to the volume  
+# Copy backup data to the volume
 docker run --rm \
   -v $(pwd)/output_backup:/backup \
   -v psn_psn-output-data:/data \
@@ -82,6 +93,7 @@ docker-compose up
 ```
 
 ### Creating a Backup
+
 ```bash
 # Backup the volume to local directory
 docker run --rm \
@@ -112,4 +124,3 @@ When redeploying or the service gets a new deployment ID:
 - [ ] Restart backend container
 - [ ] Verify API returns 378+ snapshots: `curl http://psn.rx1.uk:8080/api/analytics | jq '.totalStats'`
 - [ ] Verify frontend loads without errors: `curl http://psn.rx1.uk/`
-
