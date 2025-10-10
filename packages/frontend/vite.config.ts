@@ -6,6 +6,12 @@ import { defineConfig } from "vite";
 export default defineConfig({
   plugins: [react()],
   server: {
+    host: '0.0.0.0',
+    allowedHosts: [
+      'psn.rx1.uk',
+      'localhost',
+      '.localhost',
+    ],
     watch: {
       ignored: ["!**/output/**"],
     },
