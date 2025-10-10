@@ -18,6 +18,8 @@ output/
 !package.json
 !package-lock.json
 !tsconfig.json
+!tsconfig.*.json
+!components.json
 
 # Log files
 npm-debug.log*
