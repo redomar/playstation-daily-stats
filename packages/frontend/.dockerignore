@@ -1,0 +1,16 @@
+node_modules
+npm-debug.log
+dist
+.git
+.gitignore
+README.md
+.env
+.env.local
+.DS_Store
+coverage
+.vscode
+
+# Make sure tsconfig files are NOT ignored (they should be included)
+!tsconfig.json
+!tsconfig.app.json
+!tsconfig.node.json
