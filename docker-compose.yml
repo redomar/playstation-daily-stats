@@ -26,3 +26,4 @@ services:
 volumes:
   psn-output-data:
     driver: local
+    name: psn-output-data

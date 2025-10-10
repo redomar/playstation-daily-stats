@@ -1,0 +1,19 @@
+# Production Docker Compose Override
+# This file configures volumes to use permanent storage at /opt/psn-data
+# 
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up
+#
+# On the production server, the data is stored at /opt/psn-data
+# This location is independent of Dokploy deployment IDs and will persist
+# across redeployments.
+
+version: '3'
+
+volumes:
+  psn-output-data:
+    driver: local
+    name: psn-output-data-permanent
+    driver_opts:
+      type: none
+      device: /opt/psn-data
+      o: bind
