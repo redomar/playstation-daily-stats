@@ -138,4 +138,4 @@ export function GamesList() {
   );
 }
 
-export default OutputDisplay;
+export default GamesList;

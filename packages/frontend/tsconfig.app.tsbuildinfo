@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/outputdisplay.tsx","./src/components/games-list-v2.tsx","./src/components/games-list.tsx","./src/components/ui/button.tsx","./src/components/ui/card.tsx","./src/components/ui/dropdown-menu.tsx","./src/components/ui/select.tsx","./src/lib/utils.ts"],"version":"5.9.3"}

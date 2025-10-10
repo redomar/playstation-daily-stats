@@ -1,4 +1,4 @@
-import { GamesList } from "./components/games-list";
+import { GamesListV2 } from "./components/games-list-v2";
 
 declare global {
   interface Number {
@@ -14,8 +14,7 @@ Number.prototype.nth = function (this: number): string {
 function App() {
   return (
     <div className="App">
-      {/* <OutputDisplay /> */}
-      <GamesList />
+      <GamesListV2 />
     </div>
   );
 }

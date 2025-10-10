@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Line, ComposedChart, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
+import { Bar, XAxis, YAxis, CartesianGrid, Line, ComposedChart, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 
 import {
   Card,
