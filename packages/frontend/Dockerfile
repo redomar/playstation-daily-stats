@@ -2,13 +2,11 @@ FROM node:22-alpine
 
 WORKDIR /app
 
+# Copy package files and install dependencies
 COPY package.json package-lock.json ./
 RUN npm install
 
-# Copy TypeScript config files first
-COPY tsconfig.json tsconfig.app.json tsconfig.node.json ./
-
-# Copy the rest of the application
+# Copy all files (including tsconfig files)
 COPY . .
 
 EXPOSE 5173

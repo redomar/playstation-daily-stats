@@ -1,16 +1,37 @@
+# Dependencies
 node_modules
-npm-debug.log
+
+# Build output
 dist
-.git
-.gitignore
-README.md
+
+# Logs
+npm-debug.log
+*.log
+
+# Environment files
 .env
 .env.local
-.DS_Store
-coverage
-.vscode
+.env.*.local
 
-# Make sure tsconfig files are NOT ignored (they should be included)
+# Version control
+.git
+.gitignore
+
+# OS files
+.DS_Store
+
+# Editor
+.vscode
+.idea
+
+# Testing
+coverage
+*.test.ts
+*.test.tsx
+
+# Don't ignore these important config files
 !tsconfig.json
 !tsconfig.app.json
 !tsconfig.node.json
+!vite.config.ts
+!package.json
