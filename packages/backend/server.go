@@ -206,16 +206,24 @@ func handleLatestOutput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(files) == 0 {
+	// Filter to only output_*.json snapshot files
+	var outputFiles []os.DirEntry
+	for _, f := range files {
+		if strings.HasPrefix(f.Name(), "output_") && strings.HasSuffix(f.Name(), ".json") {
+			outputFiles = append(outputFiles, f)
+		}
+	}
+
+	if len(outputFiles) == 0 {
 		http.Error(w, "No output files found", http.StatusNotFound)
 		return
 	}
 
-	sort.Slice(files, func(i, j int) bool {
-		return files[i].Name() > files[j].Name()
+	sort.Slice(outputFiles, func(i, j int) bool {
+		return outputFiles[i].Name() > outputFiles[j].Name()
 	})
 
-	latestFile := files[0]
+	latestFile := outputFiles[0]
 	content, err := os.ReadFile(filepath.Join(outputDir, latestFile.Name()))
 	if err != nil {
 		http.Error(w, "Unable to read latest file", http.StatusInternalServerError)
