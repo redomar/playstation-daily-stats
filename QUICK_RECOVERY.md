@@ -3,6 +3,7 @@
 ## What Happens When You Push Code?
 
 When Dokploy pulls new code from Git and redeploys:
+
 1. ✅ Code updates are applied
 2. ⚠️ Docker volume may be recreated/emptied
 3. ❌ Backend will only see 1 snapshot (the new one it creates)
@@ -11,17 +12,20 @@ When Dokploy pulls new code from Git and redeploys:
 ## Quick Fix (Takes ~2 minutes)
 
 ### Step 1: SSH to server
+
 ```bash
 ssh koronto
 ```
 
 ### Step 2: Find the volume name
+
 ```bash
 docker volume ls | grep psn
 # Look for: psn-output-data or playstation-stats-service-*_psn-output-data
 ```
 
 ### Step 3: Copy data from permanent storage
+
 ```bash
 # Replace VOLUME_NAME with the name from step 2
 docker run --rm \
@@ -31,6 +35,7 @@ docker run --rm \
 ```
 
 ### Step 4: Restart backend
+
 ```bash
 # Find backend container name
 docker ps | grep backend
@@ -40,6 +45,7 @@ docker restart playstation-stats-service-XXXXX-psn-backend-1
 ```
 
 ### Step 5: Verify
+
 ```bash
 # Should see "Loaded 377 snapshots"
 docker logs playstation-stats-service-XXXXX-psn-backend-1 | grep "Loaded.*snapshots"
@@ -59,6 +65,7 @@ curl -s http://psn.rx1.uk:8080/api/analytics | jq '.totalStats'
 ## Permanent Solution (TODO)
 
 To avoid this manual step, we could:
+
 1. Use Dokploy's persistent volume configuration
 2. Mount `/opt/psn-data` directly in docker-compose (requires sudo access)
 3. Create a Docker volume with fixed name that survives redeployments

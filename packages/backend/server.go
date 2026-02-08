@@ -25,10 +25,15 @@ func startServer() {
 	mux.HandleFunc("/api/analytics/yearly/", handleYearlyTopGames)
 	mux.HandleFunc("/api/analytics/milestones", handleMilestones)
 	mux.HandleFunc("/api/analytics/years", handleAvailableYears)
+	mux.HandleFunc("/api/health", handleHealth)
+	mux.HandleFunc("/api/update-npsso", handleUpdateNPSSO)
+	mux.HandleFunc("/api/trigger-fetch", handleTriggerFetch)
 
 	allowedOrigins := strings.Split(os.Getenv("ALLOWED_ORIGINS"), ",")
 	handler := cors.New(cors.Options{
 		AllowedOrigins: allowedOrigins,
+		AllowedMethods: []string{"GET", "POST"},
+		AllowedHeaders: []string{"Content-Type"},
 	}).Handler(mux)
 
 	server := &http.Server{
@@ -115,6 +120,79 @@ func handleAvailableYears(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(years)
+}
+
+func handleHealth(w http.ResponseWriter, r *http.Request) {
+	status := state.getStatus()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(status)
+}
+
+func handleUpdateNPSSO(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST method required", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		NPSSO string `json:"npsso"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
+		return
+	}
+
+	if body.NPSSO == "" {
+		http.Error(w, "npsso field is required", http.StatusBadRequest)
+		return
+	}
+
+	// Update the in-memory NPSSO
+	state.setNPSSO(body.NPSSO)
+
+	// Persist to file so it survives restarts
+	if err := persistNPSSO(body.NPSSO); err != nil {
+		log.Println("Warning: Failed to persist NPSSO:", err)
+	}
+
+	// Clear the cached token so the new NPSSO is used immediately
+	os.Remove(tokenFile)
+
+	log.Println("NPSSO token updated via API")
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":  "ok",
+		"message": "NPSSO updated. Use POST /api/trigger-fetch to test it immediately.",
+	})
+}
+
+func handleTriggerFetch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST method required", http.StatusMethodNotAllowed)
+		return
+	}
+
+	log.Println("Manual fetch triggered via API")
+
+	// Clear the cached token to force re-authentication with current NPSSO
+	os.Remove(tokenFile)
+
+	go func() {
+		err := fetchAndSaveDataForced()
+		state.recordFetch(err)
+		if err != nil {
+			log.Println("Manual fetch failed:", err)
+		} else {
+			log.Println("Manual fetch completed successfully")
+		}
+	}()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":  "ok",
+		"message": "Fetch triggered in background. Check GET /api/health for results.",
+	})
 }
 
 func handleLatestOutput(w http.ResponseWriter, r *http.Request) {

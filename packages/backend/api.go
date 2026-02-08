@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -20,14 +21,116 @@ type TokenInfo struct {
 	ExpiresAt   time.Time `json:"expires_at"`
 }
 
+// appState holds mutable application state that can be updated at runtime.
+type appState struct {
+	mu              sync.RWMutex
+	npsso           string
+	lastFetchTime   time.Time
+	lastFetchError  string
+	lastFetchOK     bool
+	nextFetchTime   time.Time
+	consecutiveFails int
+}
+
+var state = &appState{}
+
+func (s *appState) getNPSSO() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.npsso
+}
+
+func (s *appState) setNPSSO(npsso string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.npsso = npsso
+}
+
+func (s *appState) recordFetch(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastFetchTime = time.Now()
+	if err != nil {
+		s.lastFetchError = err.Error()
+		s.lastFetchOK = false
+		s.consecutiveFails++
+	} else {
+		s.lastFetchError = ""
+		s.lastFetchOK = true
+		s.consecutiveFails = 0
+	}
+}
+
+func (s *appState) setNextFetch(t time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.nextFetchTime = t
+}
+
+func (s *appState) getStatus() map[string]interface{} {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	status := map[string]interface{}{
+		"npsso_configured":  s.npsso != "",
+		"npsso_length":      len(s.npsso),
+		"last_fetch_ok":     s.lastFetchOK,
+		"consecutive_fails": s.consecutiveFails,
+	}
+	if !s.lastFetchTime.IsZero() {
+		status["last_fetch_time"] = s.lastFetchTime.Format(time.RFC3339)
+	}
+	if s.lastFetchError != "" {
+		status["last_fetch_error"] = s.lastFetchError
+	}
+	if !s.nextFetchTime.IsZero() {
+		status["next_fetch_time"] = s.nextFetchTime.Format(time.RFC3339)
+		status["next_fetch_in"] = time.Until(s.nextFetchTime).String()
+	}
+	// Check if cached token is still valid
+	tokenInfo, err := loadTokenFromFile()
+	if err == nil && time.Now().Before(tokenInfo.ExpiresAt) {
+		status["token_valid"] = true
+		status["token_expires_in"] = time.Until(tokenInfo.ExpiresAt).String()
+	} else {
+		status["token_valid"] = false
+	}
+	return status
+}
+
+// persistNPSSO saves the NPSSO token to a file for persistence across restarts.
+func persistNPSSO(npsso string) error {
+	data, err := json.Marshal(map[string]string{"npsso": npsso})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(npssoFile, data, 0600)
+}
+
+// loadPersistedNPSSO reads a previously persisted NPSSO token.
+func loadPersistedNPSSO() string {
+	data, err := os.ReadFile(npssoFile)
+	if err != nil {
+		return ""
+	}
+	var stored map[string]string
+	if err := json.Unmarshal(data, &stored); err != nil {
+		return ""
+	}
+	return stored["npsso"]
+}
+
 func startAPIMode(npsso string) {
+	state.setNPSSO(npsso)
+
 	// Run the initial fetch
-	if err := fetchAndSaveData(npsso); err != nil {
+	err := fetchAndSaveData()
+	state.recordFetch(err)
+	if err != nil {
 		log.Println("Error fetching and saving data:", err)
 	}
 
 	// Start the scheduled fetch in a goroutine
-	go scheduledFetch(npsso)
+	go scheduledFetch()
 
 	log.Println("--- Server in API Mode Enabled ---")
 
@@ -67,7 +170,7 @@ func hasRecentSnapshot(maxAge time.Duration) bool {
 	return false
 }
 
-func scheduledFetch(npsso string) {
+func scheduledFetch() {
 	for {
 		// Calculate time until next 6am
 		now := time.Now()
@@ -79,21 +182,37 @@ func scheduledFetch(npsso string) {
 		}
 
 		duration := next6am.Sub(now)
+		state.setNextFetch(next6am)
 		log.Printf("Next fetch scheduled at %v (in %v)", next6am.Format("2006-01-02 15:04:05"), duration)
 
 		// Wait until 6am
 		time.Sleep(duration)
 
-		// Fetch data
-		if err := fetchAndSaveData(npsso); err != nil {
+		// Fetch data using current NPSSO (may have been updated via API)
+		err := fetchAndSaveData()
+		state.recordFetch(err)
+		if err != nil {
 			log.Println("Error fetching and saving data:", err)
 		}
 	}
 }
 
-func fetchAndSaveData(npsso string) error {
-	// Check if we have a recent snapshot (within 12 hours)
-	if hasRecentSnapshot(12 * time.Hour) {
+func fetchAndSaveData() error {
+	return doFetch(false)
+}
+
+func fetchAndSaveDataForced() error {
+	return doFetch(true)
+}
+
+func doFetch(force bool) error {
+	npsso := state.getNPSSO()
+	if npsso == "" {
+		return fmt.Errorf("NPSSO token is not configured")
+	}
+
+	// Check if we have a recent snapshot (within 12 hours), unless forced
+	if !force && hasRecentSnapshot(12*time.Hour) {
 		log.Println("Recent snapshot found (< 12 hours old), skipping fetch to avoid rate limiting")
 		return nil
 	}
@@ -227,7 +346,9 @@ func getAuthorizationCode(npsso string) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusFound {
-		return "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("NPSSO token is likely expired or invalid (status %d, body: %s). "+
+			"Get a new NPSSO from playstation.com cookies and update via POST /api/update-npsso", resp.StatusCode, truncate(string(body), 200))
 	}
 
 	location := resp.Header.Get("Location")
@@ -238,7 +359,14 @@ func getAuthorizationCode(npsso string) (string, error) {
 
 	code := u.Query().Get("code")
 	if !strings.HasPrefix(code, "v3.") {
-		return "", fmt.Errorf("invalid authorization code")
+		errorParam := u.Query().Get("error")
+		errorDesc := u.Query().Get("error_description")
+		if errorParam != "" {
+			return "", fmt.Errorf("NPSSO token rejected by Sony: %s - %s. "+
+				"Get a new NPSSO from playstation.com cookies and update via POST /api/update-npsso", errorParam, errorDesc)
+		}
+		return "", fmt.Errorf("invalid authorization code (no v3. prefix). "+
+			"NPSSO token is likely expired. Get a new one from playstation.com cookies and update via POST /api/update-npsso")
 	}
 
 	return code, nil
@@ -268,7 +396,8 @@ func exchangeCodeForToken(code string) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("token exchange failed (status %d): %s", resp.StatusCode, truncate(string(body), 200))
 	}
 
 	var result struct {
@@ -298,4 +427,11 @@ func makeAuthorizedRequest(url, token string) ([]byte, error) {
 	defer resp.Body.Close()
 
 	return io.ReadAll(resp.Body)
+}
+
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
