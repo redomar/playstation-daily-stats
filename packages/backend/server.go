@@ -25,6 +25,9 @@ func startServer() {
 	mux.HandleFunc("/api/analytics/yearly/", handleYearlyTopGames)
 	mux.HandleFunc("/api/analytics/milestones", handleMilestones)
 	mux.HandleFunc("/api/analytics/years", handleAvailableYears)
+	mux.HandleFunc("/api/analytics/yoy", handleYoYComparison)
+	mux.HandleFunc("/api/analytics/game/", handleGameDeepDive)
+	mux.HandleFunc("/api/analytics/genre-trends", handleGenreTrends)
 	mux.HandleFunc("/api/health", handleHealth)
 	mux.HandleFunc("/api/update-npsso", handleUpdateNPSSO)
 	mux.HandleFunc("/api/trigger-fetch", handleTriggerFetch)
@@ -184,6 +187,7 @@ func handleTriggerFetch(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			log.Println("Manual fetch failed:", err)
 		} else {
+			cache.invalidate()
 			log.Println("Manual fetch completed successfully")
 		}
 	}()
@@ -229,4 +233,48 @@ func handleLatestOutput(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(data)
+}
+
+func handleYoYComparison(w http.ResponseWriter, r *http.Request) {
+	yoy, err := getYoYComparison()
+	if err != nil {
+		http.Error(w, "Unable to calculate year-over-year data", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(yoy)
+}
+
+func handleGameDeepDive(w http.ResponseWriter, r *http.Request) {
+	titleID := strings.TrimPrefix(r.URL.Path, "/api/analytics/game/")
+	if titleID == "" {
+		http.Error(w, "titleId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	deepDive, err := getGameDeepDive(titleID)
+	if err != nil {
+		http.Error(w, "Unable to get game deep dive", http.StatusInternalServerError)
+		return
+	}
+
+	if deepDive == nil {
+		http.Error(w, "Game not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(deepDive)
+}
+
+func handleGenreTrends(w http.ResponseWriter, r *http.Request) {
+	trends, err := getGenreTrends()
+	if err != nil {
+		http.Error(w, "Unable to calculate genre trends", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(trends)
 }

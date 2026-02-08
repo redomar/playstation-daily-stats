@@ -9,8 +9,57 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
+
+// gameHistoryEntry tracks a game's cumulative hours and sessions at a point in time.
+type gameHistoryEntry struct {
+	Timestamp int64
+	Hours     float64
+	Sessions  int
+}
+
+// snapshotCache caches loaded snapshots in memory with a TTL.
+type snapshotCache struct {
+	mu        sync.RWMutex
+	snapshots []Snapshot
+	loadedAt  time.Time
+	ttl       time.Duration
+}
+
+var cache = &snapshotCache{ttl: 5 * time.Minute}
+
+func (c *snapshotCache) get() ([]Snapshot, error) {
+	c.mu.RLock()
+	if c.snapshots != nil && time.Since(c.loadedAt) < c.ttl {
+		s := c.snapshots
+		c.mu.RUnlock()
+		return s, nil
+	}
+	c.mu.RUnlock()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Double-check after acquiring write lock
+	if c.snapshots != nil && time.Since(c.loadedAt) < c.ttl {
+		return c.snapshots, nil
+	}
+
+	snapshots, err := loadAllSnapshots()
+	if err != nil {
+		return nil, err
+	}
+	c.snapshots = snapshots
+	c.loadedAt = time.Now()
+	return snapshots, nil
+}
+
+func (c *snapshotCache) invalidate() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.snapshots = nil
+}
 
 type GameTitle struct {
 	TitleID      string `json:"titleId"`
@@ -21,9 +70,10 @@ type GameTitle struct {
 }
 
 type Snapshot struct {
-	Titles    []GameTitle `json:"titles"`
+	Titles    []GameTitle        `json:"titles"`
 	Timestamp int64
 	Filename  string
+	GenreMap  map[string][]string // titleID -> genres
 }
 
 type MonthlyStats struct {
@@ -127,10 +177,29 @@ func loadAllSnapshots() ([]Snapshot, error) {
 			continue
 		}
 
+		// Parse genre data from concept.genres per title
+		var rawData struct {
+			Titles []struct {
+				TitleID string `json:"titleId"`
+				Concept struct {
+					Genres []string `json:"genres"`
+				} `json:"concept"`
+			} `json:"titles"`
+		}
+		genreMap := make(map[string][]string)
+		if err := json.Unmarshal(content, &rawData); err == nil {
+			for _, t := range rawData.Titles {
+				if len(t.Concept.Genres) > 0 {
+					genreMap[t.TitleID] = t.Concept.Genres
+				}
+			}
+		}
+
 		snapshots = append(snapshots, Snapshot{
 			Titles:    data.Titles,
 			Timestamp: timestamp,
 			Filename:  file.Name(),
+			GenreMap:  genreMap,
 		})
 	}
 
@@ -142,35 +211,30 @@ func loadAllSnapshots() ([]Snapshot, error) {
 	return snapshots, nil
 }
 
-func calculateAnalytics(snapshots []Snapshot) *Analytics {
-	if len(snapshots) == 0 {
-		return &Analytics{}
-	}
-
-	// Track game progress over time
-	gameHistory := make(map[string][]struct {
-		Timestamp int64
-		Hours     float64
-		Sessions  int
-	})
-
+// buildGameHistory builds a map of titleID -> chronological history entries from snapshots.
+func buildGameHistory(snapshots []Snapshot) map[string][]gameHistoryEntry {
+	history := make(map[string][]gameHistoryEntry)
 	for _, snapshot := range snapshots {
 		for _, game := range snapshot.Titles {
 			if !strings.Contains(game.Category, "game") {
 				continue
 			}
-
-			gameHistory[game.TitleID] = append(gameHistory[game.TitleID], struct {
-				Timestamp int64
-				Hours     float64
-				Sessions  int
-			}{
+			history[game.TitleID] = append(history[game.TitleID], gameHistoryEntry{
 				Timestamp: snapshot.Timestamp,
 				Hours:     parseDuration(game.PlayDuration),
 				Sessions:  game.PlayCount,
 			})
 		}
 	}
+	return history
+}
+
+func calculateAnalytics(snapshots []Snapshot) *Analytics {
+	if len(snapshots) == 0 {
+		return &Analytics{}
+	}
+
+	gameHistory := buildGameHistory(snapshots)
 
 	// Calculate monthly activity (actual changes)
 	monthlyStats := calculateMonthlyActivity(snapshots, gameHistory)
@@ -216,11 +280,7 @@ func calculateAnalytics(snapshots []Snapshot) *Analytics {
 	}
 }
 
-func calculateMonthlyActivity(snapshots []Snapshot, gameHistory map[string][]struct {
-	Timestamp int64
-	Hours     float64
-	Sessions  int
-}) []MonthlyStats {
+func calculateMonthlyActivity(snapshots []Snapshot, gameHistory map[string][]gameHistoryEntry) []MonthlyStats {
 	monthlyMap := make(map[string]*MonthlyStats)
 	seenGames := make(map[string]map[string]bool) // month -> gameID -> seen
 
@@ -307,19 +367,10 @@ func calculateMonthlyActivity(snapshots []Snapshot, gameHistory map[string][]str
 		return result[i].Month < result[j].Month
 	})
 
-	// Keep last 12 months
-	if len(result) > 12 {
-		result = result[len(result)-12:]
-	}
-
 	return result
 }
 
-func calculateTopGames(latest Snapshot, gameHistory map[string][]struct {
-	Timestamp int64
-	Hours     float64
-	Sessions  int
-}) []GameProgress {
+func calculateTopGames(latest Snapshot, gameHistory map[string][]gameHistoryEntry) []GameProgress {
 	var games []GameProgress
 
 	for _, game := range latest.Titles {
@@ -392,11 +443,7 @@ func calculateTopGames(latest Snapshot, gameHistory map[string][]struct {
 	return games
 }
 
-func calculateStreaks(snapshots []Snapshot, gameHistory map[string][]struct {
-	Timestamp int64
-	Hours     float64
-	Sessions  int
-}) Streaks {
+func calculateStreaks(snapshots []Snapshot, gameHistory map[string][]gameHistoryEntry) Streaks {
 	if len(snapshots) < 2 {
 		return Streaks{}
 	}
@@ -459,11 +506,7 @@ func calculateStreaks(snapshots []Snapshot, gameHistory map[string][]struct {
 	}
 }
 
-func findMostPlayedRecent(snapshots []Snapshot, gameHistory map[string][]struct {
-	Timestamp int64
-	Hours     float64
-	Sessions  int
-}, days int) string {
+func findMostPlayedRecent(snapshots []Snapshot, gameHistory map[string][]gameHistoryEntry, days int) string {
 	if len(snapshots) == 0 {
 		return "N/A"
 	}
@@ -518,7 +561,7 @@ func findMostPlayedRecent(snapshots []Snapshot, gameHistory map[string][]struct 
 
 func getAnalytics() (*Analytics, error) {
 	log.Println("Loading snapshots for analytics...")
-	snapshots, err := loadAllSnapshots()
+	snapshots, err := cache.get()
 	if err != nil {
 		return nil, err
 	}
@@ -572,7 +615,7 @@ type Milestones struct {
 
 // getMonthlyGames returns games played in a specific month (YYYY-MM format)
 func getMonthlyGames(month string) (*MonthlyGamesPlayed, error) {
-	snapshots, err := loadAllSnapshots()
+	snapshots, err := cache.get()
 	if err != nil {
 		return nil, err
 	}
@@ -670,7 +713,7 @@ func getMonthlyGames(month string) (*MonthlyGamesPlayed, error) {
 
 // getYearlyTopGames returns top games for a specific year
 func getYearlyTopGames(year int) (*YearlyTopGames, error) {
-	snapshots, err := loadAllSnapshots()
+	snapshots, err := cache.get()
 	if err != nil {
 		return nil, err
 	}
@@ -750,9 +793,9 @@ func getYearlyTopGames(year int) (*YearlyTopGames, error) {
 		return games[i].HoursGained > games[j].HoursGained
 	})
 
-	// Return top 10
-	if len(games) > 10 {
-		games = games[:10]
+	// Return top 25
+	if len(games) > 25 {
+		games = games[:25]
 	}
 
 	return &YearlyTopGames{
@@ -763,7 +806,7 @@ func getYearlyTopGames(year int) (*YearlyTopGames, error) {
 
 // getMilestones returns gaming milestones
 func getMilestones() (*Milestones, error) {
-	snapshots, err := loadAllSnapshots()
+	snapshots, err := cache.get()
 	if err != nil {
 		return nil, err
 	}
@@ -806,7 +849,7 @@ func getMilestones() (*Milestones, error) {
 
 // getAvailableYears returns all years that have data
 func getAvailableYears() ([]int, error) {
-	snapshots, err := loadAllSnapshots()
+	snapshots, err := cache.get()
 	if err != nil {
 		return nil, err
 	}
@@ -834,4 +877,494 @@ func getAvailableYears() ([]int, error) {
 	}
 
 	return years, nil
+}
+
+// ─── Year-over-Year Comparison ───
+
+type YearlySummary struct {
+	Year           int     `json:"year"`
+	TotalHours     float64 `json:"totalHours"`
+	TotalSessions  int     `json:"totalSessions"`
+	GamesPlayed    int     `json:"gamesPlayed"`
+}
+
+type YoYMonthly struct {
+	Month string             `json:"month"` // "Jan", "Feb", etc.
+	Years map[string]float64 `json:"years"` // year string -> hours
+}
+
+type YoYComparison struct {
+	Summaries []YearlySummary `json:"summaries"`
+	Monthly   []YoYMonthly    `json:"monthly"`
+}
+
+func getYoYComparison() (*YoYComparison, error) {
+	snapshots, err := cache.get()
+	if err != nil {
+		return nil, err
+	}
+
+	if len(snapshots) < 2 {
+		return &YoYComparison{}, nil
+	}
+
+	// Build full uncapped monthly activity
+	gameHistory := buildGameHistory(snapshots)
+	monthlyStats := calculateMonthlyActivity(snapshots, gameHistory)
+
+	// Pivot monthly data into year -> month structure
+	yearMonthHours := make(map[int]map[int]float64)   // year -> monthNum -> hours
+	yearMonthSessions := make(map[int]map[int]int)     // year -> monthNum -> sessions
+	yearGames := make(map[int]map[string]bool)         // year -> gameIDs
+
+	for _, ms := range monthlyStats {
+		// Parse "2024-03" into year and month
+		parts := strings.Split(ms.Month, "-")
+		if len(parts) != 2 {
+			continue
+		}
+		year, _ := strconv.Atoi(parts[0])
+		month, _ := strconv.Atoi(parts[1])
+
+		if yearMonthHours[year] == nil {
+			yearMonthHours[year] = make(map[int]float64)
+			yearMonthSessions[year] = make(map[int]int)
+			yearGames[year] = make(map[string]bool)
+		}
+		yearMonthHours[year][month] += ms.HoursPlayed
+		yearMonthSessions[year][month] += ms.SessionsPlayed
+	}
+
+	// Count games per year from snapshot data
+	for i := 1; i < len(snapshots); i++ {
+		prev := snapshots[i-1]
+		curr := snapshots[i]
+		currTime := time.Unix(curr.Timestamp, 0)
+		prevTime := time.Unix(prev.Timestamp, 0)
+		if prevTime.Year() != currTime.Year() {
+			continue
+		}
+		year := currTime.Year()
+		if yearGames[year] == nil {
+			yearGames[year] = make(map[string]bool)
+		}
+
+		prevMap := make(map[string]GameTitle)
+		for _, g := range prev.Titles {
+			if strings.Contains(g.Category, "game") {
+				prevMap[g.TitleID] = g
+			}
+		}
+		for _, g := range curr.Titles {
+			if !strings.Contains(g.Category, "game") {
+				continue
+			}
+			if pg, ok := prevMap[g.TitleID]; ok {
+				if parseDuration(g.PlayDuration) > parseDuration(pg.PlayDuration) {
+					yearGames[year][g.TitleID] = true
+				}
+			}
+		}
+	}
+
+	// Build summaries
+	var years []int
+	for y := range yearMonthHours {
+		years = append(years, y)
+	}
+	sort.Ints(years)
+
+	var summaries []YearlySummary
+	for _, y := range years {
+		totalH := 0.0
+		totalS := 0
+		for _, h := range yearMonthHours[y] {
+			totalH += h
+		}
+		for _, s := range yearMonthSessions[y] {
+			totalS += s
+		}
+		summaries = append(summaries, YearlySummary{
+			Year:          y,
+			TotalHours:    totalH,
+			TotalSessions: totalS,
+			GamesPlayed:   len(yearGames[y]),
+		})
+	}
+
+	// Build monthly overlay (Jan=1 .. Dec=12)
+	monthNames := []string{"", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"}
+	var monthly []YoYMonthly
+	for m := 1; m <= 12; m++ {
+		entry := YoYMonthly{
+			Month: monthNames[m],
+			Years: make(map[string]float64),
+		}
+		for _, y := range years {
+			if h, ok := yearMonthHours[y][m]; ok {
+				entry.Years[strconv.Itoa(y)] = h
+			}
+		}
+		monthly = append(monthly, entry)
+	}
+
+	return &YoYComparison{
+		Summaries: summaries,
+		Monthly:   monthly,
+	}, nil
+}
+
+// ─── Per-Game Deep Dive ───
+
+type CumulativePoint struct {
+	Month          string  `json:"month"`
+	CumulativeHours float64 `json:"cumulativeHours"`
+}
+
+type GameDeepDive struct {
+	TitleID        string            `json:"titleId"`
+	Name           string            `json:"name"`
+	TotalHours     float64           `json:"totalHours"`
+	TotalSessions  int               `json:"totalSessions"`
+	AvgSessionMins float64           `json:"avgSessionMins"`
+	FirstSeen      string            `json:"firstSeen"`
+	LastPlayed     string            `json:"lastPlayed"`
+	PeakMonth      string            `json:"peakMonth"`
+	PeakMonthHours float64           `json:"peakMonthHours"`
+	MonthlyData    []MonthlyGameData `json:"monthlyData"`
+	Cumulative     []CumulativePoint `json:"cumulative"`
+	Genres         []string          `json:"genres"`
+}
+
+func getGameDeepDive(titleID string) (*GameDeepDive, error) {
+	snapshots, err := cache.get()
+	if err != nil {
+		return nil, err
+	}
+
+	if len(snapshots) < 2 {
+		return nil, nil
+	}
+
+	gameHistory := buildGameHistory(snapshots)
+	history, exists := gameHistory[titleID]
+	if !exists || len(history) == 0 {
+		return nil, nil
+	}
+
+	// Find the game name and genres from the latest snapshot
+	var gameName string
+	var genres []string
+	latest := snapshots[len(snapshots)-1]
+	for _, g := range latest.Titles {
+		if g.TitleID == titleID {
+			gameName = g.Name
+			break
+		}
+	}
+	if latest.GenreMap != nil {
+		genres = latest.GenreMap[titleID]
+	}
+
+	// If not in latest snapshot, search backwards
+	if gameName == "" {
+		for i := len(snapshots) - 2; i >= 0; i-- {
+			for _, g := range snapshots[i].Titles {
+				if g.TitleID == titleID {
+					gameName = g.Name
+					break
+				}
+			}
+			if gameName != "" {
+				break
+			}
+		}
+	}
+
+	// Calculate monthly breakdown
+	monthlyData := make(map[string]*MonthlyGameData)
+	for i := 1; i < len(history); i++ {
+		prev := history[i-1]
+		curr := history[i]
+
+		currTime := time.Unix(curr.Timestamp, 0)
+		monthKey := currTime.Format("2006-01")
+
+		if monthlyData[monthKey] == nil {
+			monthlyData[monthKey] = &MonthlyGameData{Month: monthKey}
+		}
+
+		hoursGained := curr.Hours - prev.Hours
+		sessionsGained := curr.Sessions - prev.Sessions
+
+		if hoursGained > 0 && hoursGained < 1000 {
+			monthlyData[monthKey].Hours += hoursGained
+		}
+		if sessionsGained > 0 {
+			monthlyData[monthKey].Sessions += sessionsGained
+		}
+	}
+
+	var monthly []MonthlyGameData
+	for _, data := range monthlyData {
+		monthly = append(monthly, *data)
+	}
+	sort.Slice(monthly, func(i, j int) bool {
+		return monthly[i].Month < monthly[j].Month
+	})
+
+	// Find peak month
+	peakMonth := ""
+	peakHours := 0.0
+	for _, m := range monthly {
+		if m.Hours > peakHours {
+			peakHours = m.Hours
+			peakMonth = m.Month
+		}
+	}
+
+	// Build cumulative curve
+	var cumulative []CumulativePoint
+	cumHours := 0.0
+	for _, m := range monthly {
+		cumHours += m.Hours
+		cumulative = append(cumulative, CumulativePoint{
+			Month:           m.Month,
+			CumulativeHours: cumHours,
+		})
+	}
+
+	// Total stats from last entry
+	totalHours := history[len(history)-1].Hours
+	totalSessions := history[len(history)-1].Sessions
+	avgSessionMins := 0.0
+	if totalSessions > 0 {
+		avgSessionMins = (totalHours * 60) / float64(totalSessions)
+	}
+
+	firstSeen := time.Unix(history[0].Timestamp, 0).Format("2006-01-02")
+	lastPlayed := time.Unix(history[len(history)-1].Timestamp, 0).Format("2006-01-02")
+
+	return &GameDeepDive{
+		TitleID:        titleID,
+		Name:           gameName,
+		TotalHours:     totalHours,
+		TotalSessions:  totalSessions,
+		AvgSessionMins: avgSessionMins,
+		FirstSeen:      firstSeen,
+		LastPlayed:     lastPlayed,
+		PeakMonth:      peakMonth,
+		PeakMonthHours: peakHours,
+		MonthlyData:    monthly,
+		Cumulative:     cumulative,
+		Genres:         genres,
+	}, nil
+}
+
+// ─── Genre & Habit Trends ───
+
+type MonthGenreBreakdown struct {
+	Month  string             `json:"month"`
+	Genres map[string]float64 `json:"genres"` // genre -> hours
+}
+
+type SessionTrend struct {
+	Month          string  `json:"month"`
+	AvgSessionMins float64 `json:"avgSessionMins"`
+	TotalSessions  int     `json:"totalSessions"`
+}
+
+type GenreShift struct {
+	Month         string `json:"month"`
+	DominantGenre string `json:"dominantGenre"`
+}
+
+type GenreTrends struct {
+	MonthlyGenres  []MonthGenreBreakdown `json:"monthlyGenres"`
+	SessionTrends  []SessionTrend        `json:"sessionTrends"`
+	GenreShifts    []GenreShift          `json:"genreShifts"`
+	TopGenres      []string              `json:"topGenres"`
+}
+
+func getGenreTrends() (*GenreTrends, error) {
+	snapshots, err := cache.get()
+	if err != nil {
+		return nil, err
+	}
+
+	if len(snapshots) < 2 {
+		return &GenreTrends{}, nil
+	}
+
+	// Build the latest genre map (genres don't change, use latest snapshot)
+	latestGenres := snapshots[len(snapshots)-1].GenreMap
+	if latestGenres == nil {
+		latestGenres = make(map[string][]string)
+	}
+	// Fill from earlier snapshots for games that might have disappeared
+	for i := len(snapshots) - 2; i >= 0; i-- {
+		if snapshots[i].GenreMap == nil {
+			continue
+		}
+		for tid, genres := range snapshots[i].GenreMap {
+			if _, ok := latestGenres[tid]; !ok {
+				latestGenres[tid] = genres
+			}
+		}
+	}
+
+	// Monthly genre hours and session tracking
+	monthGenreHours := make(map[string]map[string]float64) // month -> genre -> hours
+	monthSessions := make(map[string]int)                   // month -> total sessions
+	monthHours := make(map[string]float64)                  // month -> total hours
+
+	for i := 1; i < len(snapshots); i++ {
+		prev := snapshots[i-1]
+		curr := snapshots[i]
+
+		currTime := time.Unix(curr.Timestamp, 0)
+		prevTime := time.Unix(prev.Timestamp, 0)
+		monthKey := currTime.Format("2006-01")
+		prevMonthKey := prevTime.Format("2006-01")
+
+		if prevMonthKey != monthKey {
+			continue
+		}
+
+		prevGames := make(map[string]GameTitle)
+		for _, g := range prev.Titles {
+			if strings.Contains(g.Category, "game") {
+				prevGames[g.TitleID] = g
+			}
+		}
+
+		for _, currGame := range curr.Titles {
+			if !strings.Contains(currGame.Category, "game") {
+				continue
+			}
+
+			prevGame, existed := prevGames[currGame.TitleID]
+			if !existed {
+				continue
+			}
+
+			hoursGained := parseDuration(currGame.PlayDuration) - parseDuration(prevGame.PlayDuration)
+			sessionsGained := currGame.PlayCount - prevGame.PlayCount
+
+			if hoursGained > 1000 || hoursGained <= 0 {
+				continue
+			}
+
+			monthHours[monthKey] += hoursGained
+			monthSessions[monthKey] += sessionsGained
+
+			// Attribute hours to genres
+			genres := latestGenres[currGame.TitleID]
+			if len(genres) == 0 {
+				continue
+			}
+			if monthGenreHours[monthKey] == nil {
+				monthGenreHours[monthKey] = make(map[string]float64)
+			}
+			perGenre := hoursGained / float64(len(genres))
+			for _, genre := range genres {
+				monthGenreHours[monthKey][genre] += perGenre
+			}
+		}
+	}
+
+	// Collect all months sorted
+	var months []string
+	for m := range monthGenreHours {
+		months = append(months, m)
+	}
+	sort.Strings(months)
+
+	// Find top 5 genres by total hours across all months
+	genreTotalHours := make(map[string]float64)
+	for _, genreHours := range monthGenreHours {
+		for genre, hours := range genreHours {
+			genreTotalHours[genre] += hours
+		}
+	}
+
+	type genreTotal struct {
+		genre string
+		hours float64
+	}
+	var genreTotals []genreTotal
+	for g, h := range genreTotalHours {
+		genreTotals = append(genreTotals, genreTotal{g, h})
+	}
+	sort.Slice(genreTotals, func(i, j int) bool {
+		return genreTotals[i].hours > genreTotals[j].hours
+	})
+
+	topN := 5
+	if len(genreTotals) < topN {
+		topN = len(genreTotals)
+	}
+	var topGenres []string
+	topGenreSet := make(map[string]bool)
+	for i := 0; i < topN; i++ {
+		topGenres = append(topGenres, genreTotals[i].genre)
+		topGenreSet[genreTotals[i].genre] = true
+	}
+
+	// Build monthly breakdowns, session trends, genre shifts
+	var monthlyGenres []MonthGenreBreakdown
+	var sessionTrends []SessionTrend
+	var genreShifts []GenreShift
+
+	for _, month := range months {
+		// Monthly genre breakdown (only top genres, rest as "Other")
+		genreBreakdown := make(map[string]float64)
+		otherHours := 0.0
+		for genre, hours := range monthGenreHours[month] {
+			if topGenreSet[genre] {
+				genreBreakdown[genre] = hours
+			} else {
+				otherHours += hours
+			}
+		}
+		if otherHours > 0 {
+			genreBreakdown["Other"] = otherHours
+		}
+		monthlyGenres = append(monthlyGenres, MonthGenreBreakdown{
+			Month:  month,
+			Genres: genreBreakdown,
+		})
+
+		// Session trend
+		avgMins := 0.0
+		if monthSessions[month] > 0 {
+			avgMins = (monthHours[month] * 60) / float64(monthSessions[month])
+		}
+		sessionTrends = append(sessionTrends, SessionTrend{
+			Month:          month,
+			AvgSessionMins: avgMins,
+			TotalSessions:  monthSessions[month],
+		})
+
+		// Dominant genre
+		maxHours := 0.0
+		dominant := ""
+		for genre, hours := range monthGenreHours[month] {
+			if hours > maxHours {
+				maxHours = hours
+				dominant = genre
+			}
+		}
+		genreShifts = append(genreShifts, GenreShift{
+			Month:         month,
+			DominantGenre: dominant,
+		})
+	}
+
+	return &GenreTrends{
+		MonthlyGenres: monthlyGenres,
+		SessionTrends: sessionTrends,
+		GenreShifts:   genreShifts,
+		TopGenres:     topGenres,
+	}, nil
 }
