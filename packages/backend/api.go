@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -171,6 +172,14 @@ func hasRecentSnapshot(maxAge time.Duration) bool {
 }
 
 func scheduledFetch() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC recovered in scheduledFetch: %v\n%s", r, debug.Stack())
+			// Restart the scheduler after a panic
+			go scheduledFetch()
+		}
+	}()
+
 	for {
 		// Calculate time until next 6am
 		now := time.Now()

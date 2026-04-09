@@ -2,16 +2,30 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/rs/cors"
 )
+
+func recoverMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				log.Printf("PANIC recovered in %s %s: %v\n%s", r.Method, r.URL.Path, err, debug.Stack())
+				http.Error(w, fmt.Sprintf("Internal server error: %v", err), http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
 
 func startServerMode() {
 	startServer()
@@ -33,11 +47,11 @@ func startServer() {
 	mux.HandleFunc("/api/trigger-fetch", handleTriggerFetch)
 
 	allowedOrigins := strings.Split(os.Getenv("ALLOWED_ORIGINS"), ",")
-	handler := cors.New(cors.Options{
+	handler := recoverMiddleware(cors.New(cors.Options{
 		AllowedOrigins: allowedOrigins,
 		AllowedMethods: []string{"GET", "POST"},
 		AllowedHeaders: []string{"Content-Type"},
-	}).Handler(mux)
+	}).Handler(mux))
 
 	server := &http.Server{
 		Addr:    ":8080",
@@ -182,6 +196,12 @@ func handleTriggerFetch(w http.ResponseWriter, r *http.Request) {
 	os.Remove(tokenFile)
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC recovered in manual fetch: %v\n%s", r, debug.Stack())
+				state.recordFetch(fmt.Errorf("panic: %v", r))
+			}
+		}()
 		err := fetchAndSaveDataForced()
 		state.recordFetch(err)
 		if err != nil {
@@ -237,7 +257,10 @@ func handleLatestOutput(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data["filename"] = latestFile.Name()
-	data["timestamp"] = latestFile.Name()[7 : len(latestFile.Name())-5]
+	name := latestFile.Name()
+	if len(name) > 12 { // "output_" (7) + at least 1 char + ".json" (5)
+		data["timestamp"] = name[7 : len(name)-5]
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(data)
