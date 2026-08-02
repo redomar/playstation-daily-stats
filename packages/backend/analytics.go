@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -70,53 +71,53 @@ type GameTitle struct {
 }
 
 type Snapshot struct {
-	Titles    []GameTitle        `json:"titles"`
+	Titles    []GameTitle `json:"titles"`
 	Timestamp int64
 	Filename  string
 	GenreMap  map[string][]string // titleID -> genres
 }
 
 type MonthlyStats struct {
-	Month         string  `json:"month"`
-	HoursPlayed   float64 `json:"hoursPlayed"`
+	Month          string  `json:"month"`
+	HoursPlayed    float64 `json:"hoursPlayed"`
 	SessionsPlayed int     `json:"sessionsPlayed"`
-	GamesPlayed   int     `json:"gamesPlayed"`
-	NewGames      int     `json:"newGames"`
+	GamesPlayed    int     `json:"gamesPlayed"`
+	NewGames       int     `json:"newGames"`
 }
 
 type GameProgress struct {
-	Name          string  `json:"name"`
-	TotalHours    float64 `json:"totalHours"`
-	TotalSessions int     `json:"totalSessions"`
-	FirstSeen     string  `json:"firstSeen"`
-	LastPlayed    string  `json:"lastPlayed"`
+	Name          string            `json:"name"`
+	TotalHours    float64           `json:"totalHours"`
+	TotalSessions int               `json:"totalSessions"`
+	FirstSeen     string            `json:"firstSeen"`
+	LastPlayed    string            `json:"lastPlayed"`
 	MonthlyData   []MonthlyGameData `json:"monthlyData"`
 }
 
 type MonthlyGameData struct {
-	Month         string  `json:"month"`
-	Hours         float64 `json:"hours"`
-	Sessions      int     `json:"sessions"`
+	Month    string  `json:"month"`
+	Hours    float64 `json:"hours"`
+	Sessions int     `json:"sessions"`
 }
 
 type Analytics struct {
-	MonthlyActivity []MonthlyStats          `json:"monthlyActivity"`
-	TopGames        []GameProgress          `json:"topGames"`
-	TotalStats      TotalStats              `json:"totalStats"`
-	Streaks         Streaks                 `json:"streaks"`
+	MonthlyActivity []MonthlyStats `json:"monthlyActivity"`
+	TopGames        []GameProgress `json:"topGames"`
+	TotalStats      TotalStats     `json:"totalStats"`
+	Streaks         Streaks        `json:"streaks"`
 }
 
 type TotalStats struct {
-	TotalGames      int     `json:"totalGames"`
-	TotalHours      float64 `json:"totalHours"`
-	TotalSessions   int     `json:"totalSessions"`
-	AvgSessionMins  float64 `json:"avgSessionMins"`
-	DaysTracked     int     `json:"daysTracked"`
+	TotalGames     int     `json:"totalGames"`
+	TotalHours     float64 `json:"totalHours"`
+	TotalSessions  int     `json:"totalSessions"`
+	AvgSessionMins float64 `json:"avgSessionMins"`
+	DaysTracked    int     `json:"daysTracked"`
 }
 
 type Streaks struct {
-	LongestStreak int      `json:"longestStreak"`
-	CurrentStreak int      `json:"currentStreak"`
+	LongestStreak    int    `json:"longestStreak"`
+	CurrentStreak    int    `json:"currentStreak"`
 	MostPlayed30Days string `json:"mostPlayed30Days"`
 	MostPlayed7Days  string `json:"mostPlayed7Days"`
 }
@@ -146,7 +147,19 @@ func parseDuration(duration string) float64 {
 }
 
 func loadAllSnapshots() ([]Snapshot, error) {
-	files, err := os.ReadDir(outputDir)
+	return loadSnapshots(outputDir, corpusAuditFile)
+}
+
+func loadSnapshots(dir, manifestPath string) ([]Snapshot, error) {
+	excluded, err := auditExclusions(manifestPath)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	if excluded == nil {
+		excluded = map[string]failureReason{}
+	}
+
+	files, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -157,6 +170,9 @@ func loadAllSnapshots() ([]Snapshot, error) {
 		if !strings.HasPrefix(file.Name(), "output_") || !strings.HasSuffix(file.Name(), ".json") {
 			continue
 		}
+		if _, isExcluded := excluded[file.Name()]; isExcluded {
+			continue
+		}
 
 		// Extract timestamp from filename
 		timestampStr := file.Name()[7 : len(file.Name())-5]
@@ -165,38 +181,39 @@ func loadAllSnapshots() ([]Snapshot, error) {
 			continue
 		}
 
-		content, err := os.ReadFile(filepath.Join(outputDir, file.Name()))
+		content, err := os.ReadFile(filepath.Join(dir, file.Name()))
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("read accepted snapshot %s: %w", file.Name(), err)
 		}
 
-		var data struct {
-			Titles []GameTitle `json:"titles"`
+		var canonical canonicalSnapshot
+		if err := json.Unmarshal(content, &canonical); err != nil {
+			return nil, fmt.Errorf("decode accepted snapshot %s: %w", file.Name(), err)
 		}
-		if err := json.Unmarshal(content, &data); err != nil {
-			continue
+		if err := validateTitles(canonical.Titles); err != nil {
+			return nil, fmt.Errorf("validate accepted snapshot %s: %w", file.Name(), err)
 		}
 
-		// Parse genre data from concept.genres per title
-		var rawData struct {
-			Titles []struct {
-				TitleID string `json:"titleId"`
+		titles := make([]GameTitle, 0, len(canonical.Titles))
+		genreMap := make(map[string][]string)
+		for _, rawTitle := range canonical.Titles {
+			var title struct {
+				GameTitle
 				Concept struct {
 					Genres []string `json:"genres"`
 				} `json:"concept"`
-			} `json:"titles"`
-		}
-		genreMap := make(map[string][]string)
-		if err := json.Unmarshal(content, &rawData); err == nil {
-			for _, t := range rawData.Titles {
-				if len(t.Concept.Genres) > 0 {
-					genreMap[t.TitleID] = t.Concept.Genres
-				}
+			}
+			if err := json.Unmarshal(rawTitle, &title); err != nil {
+				return nil, fmt.Errorf("decode title in accepted snapshot %s: %w", file.Name(), err)
+			}
+			titles = append(titles, title.GameTitle)
+			if len(title.Concept.Genres) > 0 {
+				genreMap[title.TitleID] = title.Concept.Genres
 			}
 		}
 
 		snapshots = append(snapshots, Snapshot{
-			Titles:    data.Titles,
+			Titles:    titles,
 			Timestamp: timestamp,
 			Filename:  file.Name(),
 			GenreMap:  genreMap,
@@ -586,16 +603,16 @@ type MonthlyGamesPlayed struct {
 }
 
 type MonthlyGameSummary struct {
-	Name         string  `json:"name"`
-	HoursGained  float64 `json:"hoursGained"`
-	SessionsGained int   `json:"sessionsGained"`
-	TitleID      string  `json:"titleId"`
+	Name           string  `json:"name"`
+	HoursGained    float64 `json:"hoursGained"`
+	SessionsGained int     `json:"sessionsGained"`
+	TitleID        string  `json:"titleId"`
 }
 
 // YearlyTopGames represents top games for a specific year
 type YearlyTopGames struct {
-	Year  int                  `json:"year"`
-	Games []YearlyGameSummary  `json:"games"`
+	Year  int                 `json:"year"`
+	Games []YearlyGameSummary `json:"games"`
 }
 
 type YearlyGameSummary struct {
@@ -882,10 +899,10 @@ func getAvailableYears() ([]int, error) {
 // ─── Year-over-Year Comparison ───
 
 type YearlySummary struct {
-	Year           int     `json:"year"`
-	TotalHours     float64 `json:"totalHours"`
-	TotalSessions  int     `json:"totalSessions"`
-	GamesPlayed    int     `json:"gamesPlayed"`
+	Year          int     `json:"year"`
+	TotalHours    float64 `json:"totalHours"`
+	TotalSessions int     `json:"totalSessions"`
+	GamesPlayed   int     `json:"gamesPlayed"`
 }
 
 type YoYMonthly struct {
@@ -913,9 +930,9 @@ func getYoYComparison() (*YoYComparison, error) {
 	monthlyStats := calculateMonthlyActivity(snapshots, gameHistory)
 
 	// Pivot monthly data into year -> month structure
-	yearMonthHours := make(map[int]map[int]float64)   // year -> monthNum -> hours
-	yearMonthSessions := make(map[int]map[int]int)     // year -> monthNum -> sessions
-	yearGames := make(map[int]map[string]bool)         // year -> gameIDs
+	yearMonthHours := make(map[int]map[int]float64) // year -> monthNum -> hours
+	yearMonthSessions := make(map[int]map[int]int)  // year -> monthNum -> sessions
+	yearGames := make(map[int]map[string]bool)      // year -> gameIDs
 
 	for _, ms := range monthlyStats {
 		// Parse "2024-03" into year and month
@@ -1017,7 +1034,7 @@ func getYoYComparison() (*YoYComparison, error) {
 // ─── Per-Game Deep Dive ───
 
 type CumulativePoint struct {
-	Month          string  `json:"month"`
+	Month           string  `json:"month"`
 	CumulativeHours float64 `json:"cumulativeHours"`
 }
 
@@ -1180,10 +1197,10 @@ type GenreShift struct {
 }
 
 type GenreTrends struct {
-	MonthlyGenres  []MonthGenreBreakdown `json:"monthlyGenres"`
-	SessionTrends  []SessionTrend        `json:"sessionTrends"`
-	GenreShifts    []GenreShift          `json:"genreShifts"`
-	TopGenres      []string              `json:"topGenres"`
+	MonthlyGenres []MonthGenreBreakdown `json:"monthlyGenres"`
+	SessionTrends []SessionTrend        `json:"sessionTrends"`
+	GenreShifts   []GenreShift          `json:"genreShifts"`
+	TopGenres     []string              `json:"topGenres"`
 }
 
 func getGenreTrends() (*GenreTrends, error) {
@@ -1215,8 +1232,8 @@ func getGenreTrends() (*GenreTrends, error) {
 
 	// Monthly genre hours and session tracking
 	monthGenreHours := make(map[string]map[string]float64) // month -> genre -> hours
-	monthSessions := make(map[string]int)                   // month -> total sessions
-	monthHours := make(map[string]float64)                  // month -> total hours
+	monthSessions := make(map[string]int)                  // month -> total sessions
+	monthHours := make(map[string]float64)                 // month -> total hours
 
 	for i := 1; i < len(snapshots); i++ {
 		prev := snapshots[i-1]

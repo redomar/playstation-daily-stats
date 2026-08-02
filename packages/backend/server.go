@@ -159,21 +159,16 @@ func handleUpdateNPSSO(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if body.NPSSO == "" {
+	if strings.TrimSpace(body.NPSSO) == "" {
 		http.Error(w, "npsso field is required", http.StatusBadRequest)
 		return
 	}
 
-	// Update the in-memory NPSSO
-	state.setNPSSO(body.NPSSO)
-
-	// Persist to file so it survives restarts
-	if err := persistNPSSO(body.NPSSO); err != nil {
-		log.Println("Warning: Failed to persist NPSSO:", err)
+	if err := state.updateCredential(npssoFile, tokenFile, body.NPSSO); err != nil {
+		log.Println("Failed to persist NPSSO update:", err)
+		http.Error(w, "Unable to persist NPSSO update", http.StatusInternalServerError)
+		return
 	}
-
-	// Clear the cached token so the new NPSSO is used immediately
-	os.Remove(tokenFile)
 
 	log.Println("NPSSO token updated via API")
 
@@ -184,6 +179,10 @@ func handleUpdateNPSSO(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+var startManualFetch = func() bool {
+	return activeFetchService.start(true, logFetchResult)
+}
+
 func handleTriggerFetch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST method required", http.StatusMethodNotAllowed)
@@ -191,30 +190,20 @@ func handleTriggerFetch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Println("Manual fetch triggered via API")
-
-	// Clear the cached token to force re-authentication with current NPSSO
-	os.Remove(tokenFile)
-
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("PANIC recovered in manual fetch: %v\n%s", r, debug.Stack())
-				state.recordFetch(fmt.Errorf("panic: %v", r))
-			}
-		}()
-		err := fetchAndSaveDataForced()
-		state.recordFetch(err)
-		if err != nil {
-			log.Println("Manual fetch failed:", err)
-		} else {
-			cache.invalidate()
-			log.Println("Manual fetch completed successfully")
-		}
-	}()
+	if !startManualFetch() {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{
+			"status":  "already_running",
+			"message": "A fetch attempt is already running.",
+		})
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(map[string]string{
-		"status":  "ok",
+		"status":  "accepted",
 		"message": "Fetch triggered in background. Check GET /api/health for results.",
 	})
 }

@@ -1,6 +1,8 @@
 version: '3'
 services:
   psn-backend:
+    restart: unless-stopped
+    mem_limit: 512m
     build:
       context: ./packages/backend
       dockerfile: Dockerfile
@@ -13,6 +15,8 @@ services:
       - "8080:8080"
 
   psn-frontend:
+    restart: unless-stopped
+    mem_limit: 384m
     build:
       context: ./packages/frontend
       dockerfile: Dockerfile
