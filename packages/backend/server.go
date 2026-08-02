@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/rs/cors"
 )
@@ -43,6 +44,7 @@ func startServer() {
 	mux.HandleFunc("/api/analytics/game/", handleGameDeepDive)
 	mux.HandleFunc("/api/analytics/genre-trends", handleGenreTrends)
 	mux.HandleFunc("/api/health", handleHealth)
+	mux.HandleFunc("/api/events", handleEvents)
 	mux.HandleFunc("/api/update-npsso", handleUpdateNPSSO)
 	mux.HandleFunc("/api/trigger-fetch", handleTriggerFetch)
 
@@ -139,10 +141,67 @@ func handleAvailableYears(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(years)
 }
 
+var reportCurrentHealth = func() healthResponse {
+	if activeHealthRuntime == nil {
+		return evaluateHealth(time.Now(), healthInput{CredentialState: healthCredentialExpired})
+	}
+	return activeHealthRuntime.report()
+}
+
 func handleHealth(w http.ResponseWriter, r *http.Request) {
-	status := state.getStatus()
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET method required", http.StatusMethodNotAllowed)
+		return
+	}
+	response := reportCurrentHealth()
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(status)
+	if response.Status == healthStatusDegraded {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+	_ = json.NewEncoder(w).Encode(response)
+}
+
+func handleEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET method required", http.StatusMethodNotAllowed)
+		return
+	}
+	query := eventQuery{}
+	if kind := r.URL.Query().Get("kind"); kind != "" {
+		query.Kind = eventKind(kind)
+		if !validEventKind(query.Kind) {
+			http.Error(w, "Invalid event kind", http.StatusBadRequest)
+			return
+		}
+	}
+	if since := r.URL.Query().Get("since"); since != "" {
+		parsed, err := time.Parse(time.RFC3339, since)
+		if err != nil {
+			http.Error(w, "Invalid since timestamp", http.StatusBadRequest)
+			return
+		}
+		query.Since = parsed
+	}
+	if limit := r.URL.Query().Get("limit"); limit != "" {
+		parsed, err := strconv.Atoi(limit)
+		if err != nil || parsed <= 0 {
+			http.Error(w, "Invalid event limit", http.StatusBadRequest)
+			return
+		}
+		query.Limit = parsed
+	}
+	if activeEventStore == nil {
+		http.Error(w, "Event history unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	events, err := activeEventStore.Recent(query)
+	if err != nil {
+		log.Printf("Unable to read event history: %v", err)
+		http.Error(w, "Event history unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(events)
 }
 
 func handleUpdateNPSSO(w http.ResponseWriter, r *http.Request) {
@@ -171,6 +230,11 @@ func handleUpdateNPSSO(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Println("NPSSO token updated via API")
+	recordEvent(eventRecord{
+		Timestamp: time.Now().UTC(),
+		Kind:      eventKindAuth,
+		Message:   "Credential updated.",
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{

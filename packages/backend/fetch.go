@@ -736,15 +736,7 @@ func (s *appState) applyDurableFetchState(fetchState durableFetchState) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.consecutiveFails = fetchState.ConsecutiveFailure
-	s.lastFetchOK = fetchState.ConsecutiveFailure == 0 && (fetchState.LatestOutcome == fetchSucceeded || fetchState.LatestOutcome == fetchSkipped)
-	if fetchState.LastAttemptAt != nil {
-		s.lastFetchTime = *fetchState.LastAttemptAt
-	}
-	if fetchState.Reason != "" {
-		s.activeFetchFailure = string(fetchState.Reason) + ": " + fetchState.Summary
-	} else {
-		s.activeFetchFailure = ""
-	}
+	s.activeFetchReason = fetchState.Reason
 }
 
 func newAttemptID() (string, error) {

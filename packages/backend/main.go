@@ -16,11 +16,13 @@ const (
 )
 
 var (
-	tokenFile       = "output/token.json"
-	npssoFile       = "output/npsso.json"
-	fetchStateFile  = "output/fetch-state.json"
-	corpusAuditFile = "output/corpus-audit.json"
-	outputDir       = "output/"
+	tokenFile           = "output/token.json"
+	npssoFile           = "output/npsso.json"
+	fetchStateFile      = "output/fetch-state.json"
+	corpusAuditFile     = "output/corpus-audit.json"
+	outputDir           = "output/"
+	activeEventStore    *eventStore
+	activeHealthRuntime *healthRuntime
 )
 
 func main() {
@@ -43,12 +45,28 @@ func main() {
 		return
 	}
 
+	var corpusInitializationErr error
 	if manifest, created, err := ensureCorpusAudit(outputDir, corpusAuditFile, time.Now()); err != nil {
-		state.recordFetchStateFailure(err)
+		corpusInitializationErr = err
 		log.Printf("Unable to load or create corpus audit: %v", err)
 	} else if created {
 		log.Printf("Corpus audit created: accepted=%d excluded=%d", manifest.AcceptedCount, manifest.ExcludedCount)
 		cache.invalidate()
+	}
+
+	if !*serverOnly && !*apiMode {
+		return
+	}
+
+	credential := resolveCredential(npssoFile, os.Getenv("NPSSO"))
+	if credential.State == credentialReady {
+		log.Println("Using durable NPSSO credential")
+	} else {
+		log.Printf("Starting degraded: credential state=%s reason=%s", credential.State, credential.Reason)
+	}
+	initializeRuntime(credential)
+	if corpusInitializationErr != nil {
+		state.recordFetchStateFailure(corpusInitializationErr)
 	}
 
 	if *serverOnly {
@@ -58,14 +76,24 @@ func main() {
 	}
 
 	if *apiMode {
-		credential := resolveCredential(npssoFile, os.Getenv("NPSSO"))
-		if credential.State == credentialReady {
-			log.Println("Using durable NPSSO credential")
-		} else {
-			log.Printf("Starting degraded: credential state=%s reason=%s", credential.State, credential.Reason)
-		}
 		log.Println("--- API Mode Enabled ---")
-		startAPIMode(credential)
+		startAPIMode()
 		return
 	}
+}
+
+func initializeRuntime(credential credentialResolution) {
+	state.setCredential(credential)
+	activeFetchService = newDefaultFetchService()
+	if err := activeFetchService.restore(); err != nil {
+		state.recordFetchStateFailure(err)
+		log.Printf("Unable to restore durable fetch state: %v", err)
+	}
+
+	activeEventStore = newEventStore(eventStorePath(outputDir))
+	if err := recordBoot(activeEventStore, time.Now()); err != nil {
+		state.recordFetchStateFailure(err)
+		log.Printf("Unable to persist boot event: %v", err)
+	}
+	activeHealthRuntime = newHealthRuntime(state, activeEventStore, outputDir, corpusAuditFile)
 }

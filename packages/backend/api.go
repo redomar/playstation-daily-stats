@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -20,16 +19,18 @@ type TokenInfo struct {
 
 // appState holds mutable application state that can be updated at runtime.
 type appState struct {
-	mu                 sync.RWMutex
-	credentialUpdate   sync.Mutex
-	npsso              string
-	credentialState    credentialState
-	credentialReason   string
-	lastFetchTime      time.Time
-	activeFetchFailure string
-	lastFetchOK        bool
-	nextFetchTime      time.Time
-	consecutiveFails   int
+	mu                sync.RWMutex
+	credentialUpdate  sync.Mutex
+	npsso             string
+	credentialState   credentialState
+	activeFetchReason failureReason
+	consecutiveFails  int
+}
+
+type fetchHealthState struct {
+	ConsecutiveFailures      int
+	ActiveFetchFailureReason failureReason
+	CredentialState          credentialState
 }
 
 var state = &appState{}
@@ -47,7 +48,6 @@ func (s *appState) setCredential(credential credentialResolution) {
 	defer s.mu.Unlock()
 	s.npsso = credential.Value
 	s.credentialState = credential.State
-	s.credentialReason = credential.Reason
 }
 
 func (s *appState) updateCredential(npssoPath, cachedTokenPath, npsso string) error {
@@ -61,7 +61,6 @@ func (s *appState) updateCredential(npssoPath, cachedTokenPath, npsso string) er
 	s.mu.Lock()
 	s.npsso = npsso
 	s.credentialState = credentialReady
-	s.credentialReason = ""
 	s.mu.Unlock()
 
 	if err := os.Remove(cachedTokenPath); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -70,54 +69,18 @@ func (s *appState) updateCredential(npssoPath, cachedTokenPath, npsso string) er
 	return nil
 }
 
-func (s *appState) setNextFetch(t time.Time) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.nextFetchTime = t
-}
-
-func (s *appState) getStatus() map[string]interface{} {
+func (s *appState) healthState() fetchHealthState {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	status := map[string]interface{}{
-		"npsso_configured":  s.npsso != "",
-		"npsso_length":      len(s.npsso),
-		"credential_state":  s.credentialState,
-		"last_fetch_ok":     s.lastFetchOK,
-		"consecutive_fails": s.consecutiveFails,
+	result := fetchHealthState{
+		ConsecutiveFailures:      s.consecutiveFails,
+		ActiveFetchFailureReason: s.activeFetchReason,
+		CredentialState:          s.credentialState,
 	}
-	if s.credentialReason != "" {
-		status["credential_reason"] = s.credentialReason
-	}
-	if !s.lastFetchTime.IsZero() {
-		status["last_fetch_time"] = s.lastFetchTime.Format(time.RFC3339)
-	}
-	if s.activeFetchFailure != "" {
-		status["active_fetch_failure"] = s.activeFetchFailure
-	}
-	if !s.nextFetchTime.IsZero() {
-		status["next_fetch_time"] = s.nextFetchTime.Format(time.RFC3339)
-		status["next_fetch_in"] = time.Until(s.nextFetchTime).String()
-	}
-	// Check if cached token is still valid
-	tokenInfo, err := loadTokenFromFile()
-	if err == nil && time.Now().Before(tokenInfo.ExpiresAt) {
-		status["token_valid"] = true
-		status["token_expires_in"] = time.Until(tokenInfo.ExpiresAt).String()
-	} else {
-		status["token_valid"] = false
-	}
-	return status
+	return result
 }
 
-func startAPIMode(credential credentialResolution) {
-	state.setCredential(credential)
-	activeFetchService = newDefaultFetchService()
-	if err := activeFetchService.restore(); err != nil {
-		state.recordFetchStateFailure(err)
-		log.Printf("Unable to restore durable fetch state: %v", err)
-	}
-
+func startAPIMode() {
 	// Keep the HTTP recovery surface available while the initial fetch runs.
 	activeFetchService.start(false, logFetchResult)
 
@@ -142,7 +105,6 @@ func scheduledFetch() {
 		}
 
 		duration := next6am.Sub(now)
-		state.setNextFetch(next6am)
 		log.Printf("Next fetch scheduled at %v (in %v)", next6am.Format("2006-01-02 15:04:05"), duration)
 
 		// Wait until 6am
@@ -186,30 +148,42 @@ func logFetchResult(result fetchResult) {
 	case fetchSucceeded:
 		cache.invalidate()
 		log.Printf("Succeeded fetch committed %d titles", result.TitleCount)
+		recordEvent(eventRecord{
+			Timestamp: time.Now().UTC(),
+			Kind:      eventKindFetch,
+			Outcome:   fetchSucceeded,
+			Message:   fmt.Sprintf("Fetch succeeded. %d titles.", result.TitleCount),
+			Fields:    map[string]any{"titles": result.TitleCount},
+		})
 	case fetchSkipped:
 		log.Println("Skipped fetch because a recent valid snapshot exists")
+		recordEvent(eventRecord{
+			Timestamp: time.Now().UTC(),
+			Kind:      eventKindFetch,
+			Outcome:   fetchSkipped,
+			Message:   "Fetch skipped because a recent valid snapshot exists.",
+		})
 	case fetchFailed:
 		if result.Err != nil {
 			log.Printf("Failed fetch reason=%s: %v", result.Reason, result.Err)
 		} else {
 			log.Printf("Failed fetch reason=%s", result.Reason)
 		}
+		recordEvent(eventRecord{
+			Timestamp: time.Now().UTC(),
+			Kind:      eventKindFetch,
+			Outcome:   fetchFailed,
+			Reason:    result.Reason,
+			Message:   "Fetch failed.",
+		})
 	}
 }
 
 func (s *appState) recordFetchStateFailure(_ error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.lastFetchOK = false
-	s.activeFetchFailure = string(reasonStorageFailure) + ": durable fetch state is unavailable"
-	s.consecutiveFails++
-}
-
-func loadTokenFromFile() (TokenInfo, error) {
-	data, err := os.ReadFile(tokenFile)
-	if err != nil {
-		return TokenInfo{}, err
+	if s.activeFetchReason != reasonStorageFailure {
+		s.consecutiveFails++
 	}
-	var tokenInfo TokenInfo
-	return tokenInfo, json.Unmarshal(data, &tokenInfo)
+	s.activeFetchReason = reasonStorageFailure
 }

@@ -231,9 +231,9 @@ func TestSkippedFetchPreservesActiveFailureAcrossRestart(t *testing.T) {
 	if reloaded.LatestOutcome != fetchSkipped || reloaded.ConsecutiveFailure != 3 || reloaded.Reason != reasonUpstreamStatus {
 		t.Fatalf("durable state after skip = %#v", reloaded)
 	}
-	status := restarted.state.getStatus()
-	if status["consecutive_fails"] != 3 || status["active_fetch_failure"] == nil {
-		t.Fatalf("active failure missing after restart and skip: %#v", status)
+	healthState := restarted.state.healthState()
+	if healthState.ConsecutiveFailures != 3 || healthState.ActiveFetchFailureReason != reasonUpstreamStatus {
+		t.Fatalf("active failure missing after restart and skip: %#v", healthState)
 	}
 }
 
