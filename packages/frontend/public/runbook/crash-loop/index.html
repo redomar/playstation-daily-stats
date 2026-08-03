@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PSN crash-loop runbook</title>
+  </head>
+  <body>
+    <main>
+      <h1>Three or more boots in one hour</h1>
+      <section>
+        <h2>Evidence</h2>
+        <p>EXAMINE <code>boots_last_hour</code> in <code>/api/health</code> and recent boot events.</p>
+      </section>
+      <section>
+        <h2>Recovery</h2>
+        <p>The crash-loop condition clears after the durable one-hour boot count falls below three.</p>
+      </section>
+      <section>
+        <h2>Action</h2>
+        <p>EXAMINE service logs and capacity evidence for the repeated startup cause.</p>
+      </section>
+    </main>
+  </body>
+</html>

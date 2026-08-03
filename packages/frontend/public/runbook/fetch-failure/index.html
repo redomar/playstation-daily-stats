@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PSN fetch failure runbook</title>
+  </head>
+  <body>
+    <main>
+      <h1>One or three failed fetches</h1>
+      <section>
+        <h2>Evidence</h2>
+        <p>EXAMINE <code>/api/events?kind=fetch</code> for the active fetch failure reason and consecutive count.</p>
+      </section>
+      <section>
+        <h2>Recovery</h2>
+        <p>A succeeded fetch commits a valid snapshot and resolves the active fetch failure.</p>
+      </section>
+      <section>
+        <h2>Action</h2>
+        <p>EXAMINE the newest fetch event before changing the durable credential or collection service.</p>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PSN liveness heartbeat runbook</title>
+  </head>
+  <body>
+    <main>
+      <h1>Missed liveness heartbeat</h1>
+      <section>
+        <h2>Evidence</h2>
+        <p>EXAMINE the configured healthchecks.io monitor for its last received liveness heartbeat.</p>
+      </section>
+      <section>
+        <h2>Recovery</h2>
+        <p>The monitor recovers after the running service sends its next unconditional heartbeat.</p>
+      </section>
+      <section>
+        <h2>Action</h2>
+        <p>EXAMINE the service runtime when <code>/api/health</code> cannot explain the missed heartbeat.</p>
+      </section>
+    </main>
+  </body>
+</html>

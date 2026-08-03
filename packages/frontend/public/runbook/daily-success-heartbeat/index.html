@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PSN daily success heartbeat runbook</title>
+  </head>
+  <body>
+    <main>
+      <h1>Missed daily-success heartbeat</h1>
+      <section>
+        <h2>Evidence</h2>
+        <p>EXAMINE the configured healthchecks.io monitor and <code>last_success</code> in <code>/api/health</code>.</p>
+      </section>
+      <section>
+        <h2>Recovery</h2>
+        <p>The monitor recovers only after a succeeded fetch commits a valid snapshot.</p>
+      </section>
+      <section>
+        <h2>Action</h2>
+        <p>EXAMINE the active fetch failure recorded by <code>/api/health</code>.</p>
+      </section>
+    </main>
+  </body>
+</html>

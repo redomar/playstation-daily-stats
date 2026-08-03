@@ -177,6 +177,9 @@ func logFetchResult(result fetchResult) {
 			Message:   "Fetch failed.",
 		})
 	}
+	if activeAlertObserver != nil {
+		go activeAlertObserver.ObserveFetch(context.Background(), result)
+	}
 }
 
 func (s *appState) recordFetchStateFailure(_ error) {

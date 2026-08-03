@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PSN quarantined candidate runbook</title>
+  </head>
+  <body>
+    <main>
+      <h1>Quarantined candidate</h1>
+      <section>
+        <h2>Evidence</h2>
+        <p>EXAMINE the fetch event reason and its retained quarantined candidate.</p>
+      </section>
+      <section>
+        <h2>Recovery</h2>
+        <p>An explicit acknowledgement clears the alert after the retained candidate has been examined.</p>
+      </section>
+      <section>
+        <h2>Action</h2>
+        <p>After examination, acknowledge the retained candidates while the backend is stopped:</p>
+        <pre><code>docker compose stop psn-backend
+docker compose run --rm psn-backend ./main -acknowledge-quarantine
+docker compose up -d psn-backend</code></pre>
+      </section>
+    </main>
+  </body>
+</html>

@@ -69,6 +69,72 @@ func TestFetchAttemptPaginatesUntilShortPageAndCommitsValidSnapshot(t *testing.T
 	}
 }
 
+func TestAcknowledgeQuarantinedCandidateClearsOnlyTheDurableMarker(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fetch-state.json")
+	service := &fetchService{fetchStateFile: path}
+	if err := service.persistDurableState(durableFetchState{
+		LatestOutcome:            fetchFailed,
+		ConsecutiveFailure:       2,
+		Reason:                   reasonInvalidSchema,
+		QuarantinedCandidate:     true,
+		LatestFailureQuarantined: true,
+		BaselineCount:            400,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	acknowledged, err := acknowledgeQuarantinedCandidate(path)
+	if err != nil {
+		t.Fatalf("acknowledgeQuarantinedCandidate() error = %v", err)
+	}
+	if !acknowledged {
+		t.Fatal("acknowledgeQuarantinedCandidate() did not report an active marker")
+	}
+	durable, err := service.loadDurableState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if durable.QuarantinedCandidate {
+		t.Fatalf("durable state = %#v, quarantine marker remains active", durable)
+	}
+	if durable.LatestFailureQuarantined {
+		t.Fatalf("durable state = %#v, acknowledged failure remains attributed to quarantine", durable)
+	}
+	if durable.LatestOutcome != fetchFailed || durable.ConsecutiveFailure != 2 || durable.Reason != reasonInvalidSchema || durable.BaselineCount != 400 {
+		t.Fatalf("acknowledgement changed unrelated durable fetch state: %#v", durable)
+	}
+	acknowledged, err = acknowledgeQuarantinedCandidate(path)
+	if err != nil || acknowledged {
+		t.Fatalf("second acknowledgement = %t, %v; want false, nil", acknowledged, err)
+	}
+}
+
+func TestScheduledSuccessPreservesOperatorOwnedQuarantineCondition(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"titles": validTitlePage(0, 1)})
+	}))
+	defer upstream.Close()
+
+	service := newTestFetchService(t, upstream.URL)
+	if err := service.persistDurableState(durableFetchState{QuarantinedCandidate: true, LatestFailureQuarantined: true}); err != nil {
+		t.Fatal(err)
+	}
+	result := service.run(context.Background(), false)
+	if result.Outcome != fetchSucceeded {
+		t.Fatalf("result = %#v, want scheduled success", result)
+	}
+	durable, err := service.loadDurableState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !durable.QuarantinedCandidate {
+		t.Fatal("scheduled success cleared a RECOVERY: NONE quarantine condition")
+	}
+	if durable.LatestFailureQuarantined {
+		t.Fatal("scheduled success left the latest terminal outcome marked as a quarantine failure")
+	}
+}
+
 func TestFetchAttemptQuarantinesPageWithoutTitles(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -81,6 +147,16 @@ func TestFetchAttemptQuarantinesPageWithoutTitles(t *testing.T) {
 
 	if result.Outcome != fetchFailed || result.Reason != reasonInvalidSchema {
 		t.Fatalf("result = %#v, want failed invalid_schema", result)
+	}
+	durable, err := service.loadDurableState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !durable.QuarantinedCandidate {
+		t.Fatalf("durable state = %#v, want unresolved quarantined candidate", durable)
+	}
+	if !durable.LatestFailureQuarantined {
+		t.Fatalf("durable state = %#v, want current failure attributed to quarantine", durable)
 	}
 	canonical, err := filepath.Glob(filepath.Join(service.outputDir, "output_*.json"))
 	if err != nil {
@@ -167,6 +243,9 @@ func TestFetchAttemptKeepsFrozenBaselineAcrossLibraryRegression(t *testing.T) {
 	if firstState.LibraryRegression == nil || firstState.LibraryRegression.CandidateCount != 1 || firstState.LibraryRegression.ConsecutiveCount != 1 {
 		t.Fatalf("first regression state = %#v", firstState.LibraryRegression)
 	}
+	if !firstState.QuarantinedCandidate {
+		t.Fatalf("first regression state = %#v, want unresolved quarantined candidate", firstState)
+	}
 
 	second := service.run(context.Background(), false)
 	if second.Outcome != fetchFailed || second.Reason != reasonLibraryRegressionPersistent {
@@ -178,6 +257,9 @@ func TestFetchAttemptKeepsFrozenBaselineAcrossLibraryRegression(t *testing.T) {
 	}
 	if secondState.BaselineCount != 2 || secondState.LibraryRegression == nil || secondState.LibraryRegression.ConsecutiveCount != 2 {
 		t.Fatalf("second regression state = %#v", secondState)
+	}
+	if !secondState.QuarantinedCandidate {
+		t.Fatalf("second regression state = %#v, want unresolved quarantined candidate", secondState)
 	}
 	canonical, err := filepath.Glob(filepath.Join(service.outputDir, "output_*.json"))
 	if err != nil {
@@ -241,9 +323,10 @@ func TestRestoreTurnsUnfinishedAttemptIntoInterruptedFetchFailure(t *testing.T) 
 	service := newTestFetchService(t, "http://unused.invalid")
 	startedAt := service.now().Add(-10 * time.Minute)
 	if err := service.persistDurableState(durableFetchState{
-		LatestOutcome: fetchSucceeded,
-		BaselineCount: 4,
-		ActiveAttempt: &attemptMarker{ID: "unfinished-attempt", StartedAt: startedAt},
+		LatestOutcome:        fetchSucceeded,
+		BaselineCount:        4,
+		QuarantinedCandidate: true,
+		ActiveAttempt:        &attemptMarker{ID: "unfinished-attempt", StartedAt: startedAt},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -261,17 +344,21 @@ func TestRestoreTurnsUnfinishedAttemptIntoInterruptedFetchFailure(t *testing.T) 
 	if restored.ActiveAttempt != nil || restored.LatestOutcome != fetchFailed || restored.Reason != reasonInterruptedFetch || restored.ConsecutiveFailure != 1 {
 		t.Fatalf("restored state = %#v, want interrupted fetch failure", restored)
 	}
+	if !restored.QuarantinedCandidate {
+		t.Fatalf("restored state = %#v, interrupted fetch cleared unresolved quarantine", restored)
+	}
 }
 
 func TestRestoreReconcilesSnapshotCommittedBeforeTerminalState(t *testing.T) {
 	service := newTestFetchService(t, "http://unused.invalid")
 	startedAt := service.now().Add(-10 * time.Minute)
 	if err := service.persistDurableState(durableFetchState{
-		LatestOutcome:      fetchFailed,
-		ConsecutiveFailure: 2,
-		Reason:             reasonUpstreamStatus,
-		BaselineCount:      3,
-		ActiveAttempt:      &attemptMarker{ID: "committed-attempt", StartedAt: startedAt},
+		LatestOutcome:        fetchFailed,
+		ConsecutiveFailure:   2,
+		Reason:               reasonUpstreamStatus,
+		BaselineCount:        3,
+		QuarantinedCandidate: true,
+		ActiveAttempt:        &attemptMarker{ID: "committed-attempt", StartedAt: startedAt},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -297,6 +384,9 @@ func TestRestoreReconcilesSnapshotCommittedBeforeTerminalState(t *testing.T) {
 	}
 	if restored.ActiveAttempt != nil || restored.LatestOutcome != fetchSucceeded || restored.ConsecutiveFailure != 0 || restored.BaselineCount != 4 {
 		t.Fatalf("restored state = %#v, want reconciled success", restored)
+	}
+	if !restored.QuarantinedCandidate {
+		t.Fatalf("restored state = %#v, reconciled scheduled success cleared a RECOVERY: NONE quarantine condition", restored)
 	}
 }
 
@@ -495,10 +585,23 @@ func TestFetchAttemptRejectsNon2xxGameListResponse(t *testing.T) {
 	defer upstream.Close()
 
 	service := newTestFetchService(t, upstream.URL)
+	if err := service.persistDurableState(durableFetchState{QuarantinedCandidate: true, LatestFailureQuarantined: true}); err != nil {
+		t.Fatal(err)
+	}
 	result := service.run(context.Background(), true)
 
 	if result.Outcome != fetchFailed || result.Reason != reasonUpstreamStatus {
 		t.Fatalf("result = %#v, want failed upstream_status", result)
+	}
+	durable, err := service.loadDurableState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !durable.QuarantinedCandidate {
+		t.Fatalf("durable state = %#v, unrelated failure cleared unresolved quarantine", durable)
+	}
+	if durable.LatestFailureQuarantined {
+		t.Fatalf("durable state = %#v, unrelated failure remained attributed to quarantine", durable)
 	}
 	canonical, err := filepath.Glob(filepath.Join(service.outputDir, "output_*.json"))
 	if err != nil {
@@ -506,6 +609,32 @@ func TestFetchAttemptRejectsNon2xxGameListResponse(t *testing.T) {
 	}
 	if len(canonical) != 0 {
 		t.Fatalf("non-2xx response admitted as canonical: %v", canonical)
+	}
+}
+
+func TestFetchAttemptDoesNotPersistQuarantineWhenCandidateCouldNotBePersisted(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": "missing titles"})
+	}))
+	defer upstream.Close()
+
+	service := newTestFetchService(t, upstream.URL)
+	if err := os.WriteFile(filepath.Join(service.outputDir, "quarantine"), []byte("blocks quarantine directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	result := service.run(context.Background(), true)
+
+	if result.Outcome != fetchFailed || result.Reason != reasonStorageFailure {
+		t.Fatalf("result = %#v, want failed storage_failure", result)
+	}
+	durable, err := service.loadDurableState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if durable.QuarantinedCandidate {
+		t.Fatalf("durable state = %#v, failed quarantine persistence marked candidate quarantined", durable)
 	}
 }
 

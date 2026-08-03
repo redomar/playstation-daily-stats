@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PSN capacity pressure runbook</title>
+  </head>
+  <body>
+    <main>
+      <h1>Storage or memory above 90%</h1>
+      <section>
+        <h2>Evidence</h2>
+        <p>EXAMINE storage and memory percentages in <code>/api/health</code> against the alert recovery time.</p>
+      </section>
+      <section>
+        <h2>Recovery</h2>
+        <p>The condition recovers when both measured percentages fall to 90% or below.</p>
+      </section>
+      <section>
+        <h2>Action</h2>
+        <p>EXAMINE capacity growth without deleting snapshots, events, or quarantined candidates.</p>
+      </section>
+    </main>
+  </body>
+</html>

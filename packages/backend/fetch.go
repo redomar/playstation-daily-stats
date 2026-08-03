@@ -100,15 +100,17 @@ type attemptMarker struct {
 }
 
 type durableFetchState struct {
-	LatestOutcome      fetchOutcome            `json:"latestOutcome,omitempty"`
-	LastAttemptAt      *time.Time              `json:"lastAttemptAt,omitempty"`
-	LastSuccessAt      *time.Time              `json:"lastSuccessAt,omitempty"`
-	ConsecutiveFailure int                     `json:"consecutiveFailures"`
-	Reason             failureReason           `json:"reason,omitempty"`
-	Summary            string                  `json:"summary,omitempty"`
-	BaselineCount      int                     `json:"baselineCount"`
-	ActiveAttempt      *attemptMarker          `json:"activeAttempt,omitempty"`
-	LibraryRegression  *libraryRegressionState `json:"libraryRegression,omitempty"`
+	LatestOutcome            fetchOutcome            `json:"latestOutcome,omitempty"`
+	LastAttemptAt            *time.Time              `json:"lastAttemptAt,omitempty"`
+	LastSuccessAt            *time.Time              `json:"lastSuccessAt,omitempty"`
+	ConsecutiveFailure       int                     `json:"consecutiveFailures"`
+	Reason                   failureReason           `json:"reason,omitempty"`
+	Summary                  string                  `json:"summary,omitempty"`
+	BaselineCount            int                     `json:"baselineCount"`
+	QuarantinedCandidate     bool                    `json:"quarantinedCandidate"`
+	LatestFailureQuarantined bool                    `json:"latestFailureQuarantined"`
+	ActiveAttempt            *attemptMarker          `json:"activeAttempt,omitempty"`
+	LibraryRegression        *libraryRegressionState `json:"libraryRegression,omitempty"`
 }
 
 type libraryRegressionState struct {
@@ -186,6 +188,9 @@ func (s *fetchService) runAttempt(ctx context.Context, force bool) fetchResult {
 	if err := s.persistDurableState(durable); err != nil {
 		return s.storageFailure(err)
 	}
+	// The on-disk state continues to describe the previous terminal failure
+	// until this attempt reaches its own terminal outcome.
+	durable.LatestFailureQuarantined = false
 
 	npsso := s.state.getNPSSO()
 	if npsso == "" {
@@ -205,6 +210,8 @@ func (s *fetchService) runAttempt(ctx context.Context, force bool) fetchResult {
 				if quarantineErr := s.quarantine(attemptID, failure.Reason, failure.Payload); quarantineErr != nil {
 					return s.failAttempt(durable, attemptID, reasonStorageFailure, "quarantine invalid candidate", quarantineErr)
 				}
+				durable.QuarantinedCandidate = true
+				durable.LatestFailureQuarantined = true
 			}
 			return s.failAttempt(durable, attemptID, failure.Reason, failure.Summary, err)
 		}
@@ -222,6 +229,8 @@ func (s *fetchService) runAttempt(ctx context.Context, force bool) fetchResult {
 		if quarantineErr := s.quarantine(attemptID, reasonInvalidSchema, snapshotData); quarantineErr != nil {
 			return s.failAttempt(durable, attemptID, reasonStorageFailure, "quarantine invalid candidate", quarantineErr)
 		}
+		durable.QuarantinedCandidate = true
+		durable.LatestFailureQuarantined = true
 		return s.failAttempt(durable, attemptID, reasonInvalidSchema, "candidate failed structural validation", err)
 	}
 	if durable.BaselineCount > 0 && len(titles) < durable.BaselineCount {
@@ -248,6 +257,8 @@ func (s *fetchService) runAttempt(ctx context.Context, force bool) fetchResult {
 		if quarantineErr := s.quarantine(attemptID, reason, snapshotData); quarantineErr != nil {
 			return s.failAttempt(durable, attemptID, reasonStorageFailure, "quarantine implausible candidate", quarantineErr)
 		}
+		durable.QuarantinedCandidate = true
+		durable.LatestFailureQuarantined = true
 		return s.failAttempt(durable, attemptID, reason,
 			fmt.Sprintf("candidate title count %d is below baseline %d", len(titles), durable.BaselineCount), nil)
 	}
@@ -267,6 +278,7 @@ func (s *fetchService) runAttempt(ctx context.Context, force bool) fetchResult {
 	durable.Reason = ""
 	durable.Summary = ""
 	durable.BaselineCount = len(titles)
+	durable.LatestFailureQuarantined = false
 	durable.LibraryRegression = nil
 	if err := s.persistDurableState(durable); err != nil {
 		result := s.storageFailure(fmt.Errorf("persist succeeded fetch state: %w", err))
@@ -315,12 +327,14 @@ func (s *fetchService) restore() error {
 			durable.Reason = ""
 			durable.Summary = ""
 			durable.BaselineCount = titleCount
+			durable.LatestFailureQuarantined = false
 			durable.LibraryRegression = nil
 		} else {
 			durable.LatestOutcome = fetchFailed
 			durable.ConsecutiveFailure++
 			durable.Reason = reasonInterruptedFetch
 			durable.Summary = "fetch attempt was interrupted before durable snapshot commit"
+			durable.LatestFailureQuarantined = false
 		}
 		if err := s.persistDurableState(durable); err != nil {
 			return err
@@ -690,6 +704,23 @@ func (s *fetchService) persistDurableState(state durableFetchState) error {
 		return err
 	}
 	return writeFileAtomically(s.fetchStateFile, data, 0o600)
+}
+
+func acknowledgeQuarantinedCandidate(path string) (bool, error) {
+	service := &fetchService{fetchStateFile: path}
+	durable, err := service.loadDurableState()
+	if err != nil {
+		return false, err
+	}
+	if !durable.QuarantinedCandidate {
+		return false, nil
+	}
+	durable.QuarantinedCandidate = false
+	durable.LatestFailureQuarantined = false
+	if err := service.persistDurableState(durable); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 type quarantineRecord struct {

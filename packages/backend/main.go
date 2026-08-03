@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"os"
@@ -23,6 +24,8 @@ var (
 	outputDir           = "output/"
 	activeEventStore    *eventStore
 	activeHealthRuntime *healthRuntime
+	activeAlertObserver alertFetchObserver
+	activeAlertRuntime  *alertCoordinator
 )
 
 func main() {
@@ -34,7 +37,20 @@ func main() {
 	apiMode := flag.Bool("api", true, "Run in API mode (fetch data and serve)")
 	serverOnly := flag.Bool("server-only", false, "Run in server-only mode")
 	auditOnly := flag.Bool("audit-corpus", false, "Rebuild the historical snapshot audit manifest and exit")
+	acknowledgeQuarantine := flag.Bool("acknowledge-quarantine", false, "Acknowledge retained quarantined candidates and exit; run with the service stopped")
 	flag.Parse()
+	if *acknowledgeQuarantine {
+		acknowledged, err := acknowledgeQuarantinedCandidate(fetchStateFile)
+		if err != nil {
+			log.Fatal("Unable to acknowledge quarantined candidates:", err)
+		}
+		if acknowledged {
+			log.Println("Acknowledged retained quarantined candidates")
+		} else {
+			log.Println("No quarantined candidate acknowledgement was pending")
+		}
+		return
+	}
 
 	if *auditOnly {
 		manifest, err := auditCorpus(outputDir, corpusAuditFile, time.Now())
@@ -68,6 +84,7 @@ func main() {
 	if corpusInitializationErr != nil {
 		state.recordFetchStateFailure(corpusInitializationErr)
 	}
+	go activeAlertRuntime.Run(context.Background())
 
 	if *serverOnly {
 		log.Println("--- Server Mode Enabled ---")
@@ -96,4 +113,22 @@ func initializeRuntime(credential credentialResolution) {
 		log.Printf("Unable to persist boot event: %v", err)
 	}
 	activeHealthRuntime = newHealthRuntime(state, activeEventStore, outputDir, corpusAuditFile)
+	delivery := newDeliveryRuntime(deliveryConfig{
+		NtfyTopicURL: os.Getenv("NTFY_TOPIC_URL"),
+		LivenessURL:  os.Getenv("HEALTHCHECKS_LIVENESS_URL"),
+		SuccessURL:   os.Getenv("HEALTHCHECKS_SUCCESS_URL"),
+	}, activeEventStore)
+	activeAlertRuntime = newAlertCoordinator(
+		delivery,
+		activeHealthRuntime.report,
+		func() (quarantineAlertStatus, error) {
+			durable, err := activeFetchService.loadDurableState()
+			return quarantineAlertStatus{
+				Active:               durable.QuarantinedCandidate,
+				CausedCurrentFailure: durable.LatestFailureQuarantined,
+			}, err
+		},
+		time.Now,
+	)
+	activeAlertObserver = activeAlertRuntime
 }
